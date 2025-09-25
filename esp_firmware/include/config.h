@@ -2,30 +2,8 @@
 #define CONFIG_H
 
 // WiFi and mDNS
-#define HOSTNAME    "DIT-2025-00-ESP"
-#define MDNS_NAME   "dit-2025-00-esp"
-
-// ESP-NOW for SIMA communication
-//  [94:a9:90:07:00:78]---[01]
-//  [94:a9:90:06:E6:00]---[02]
-//  [94:a9:90:0b:86:d8]---[03]
-//  [94:a9:90:05:57:d8]---[04]
-//  [94:a9:90:0b:64:f0]---[05]
-//  [94:a9:90:06:e6:b4]---[06]
-//  [94:a9:90:05:4d:48]---[07]
-//  [94:a9:90:05:57:f4]---[08]
-
-// [ DIT-2025-11 ]
-// #define SIMA_01 { 0x94, 0xa9, 0x90, 0x07, 0x00, 0x78 }
-// #define SIMA_02 { 0x94, 0xa9, 0x90, 0x06, 0xe6, 0x00 }
-// #define SIMA_03 { 0x94, 0xa9, 0x90, 0x0b, 0x86, 0xd8 }
-// #define SIMA_04 { 0x94, 0xa9, 0x90, 0x05, 0x57, 0xd8 }
-
-// [ DIT-2025-14 ]
-#define SIMA_01 { 0x94, 0xa9, 0x90, 0x0b, 0x64, 0xf0 }
-#define SIMA_02 { 0x94, 0xa9, 0x90, 0x06, 0xe6, 0xb4 }
-#define SIMA_03 { 0x94, 0xa9, 0x90, 0x05, 0x4d, 0x48 }
-#define SIMA_04 { 0x94, 0xa9, 0x90, 0x05, 0x57, 0xf4 }
+#define HOSTNAME    "HERMES-ESP"
+#define MDNS_NAME   "hermes-esp"
 
 // micro-ROS
 #define ROS_NODE_NAME       "esp_daemon"
@@ -34,16 +12,19 @@
 #define MROS_TIMEOUT_MS     100
 #define MROS_PING_INTERVAL  1000
 
-// Emergency Button
-#define RELAY_PIN           D2
-#define RELAY_ACTIVE_STATE  LOW
-#define RELAY_INITIAL_STATE LOW
-#define ENABLE              RELAY_ACTIVE_STATE
-#define DISABLE           (!RELAY_ACTIVE_STATE)
+// Servo control
+#define SERVO_D0_PIN        D0
+#define SERVO_D1_PIN        D1  
+#define SERVO_D2_PIN        D2
+#define SERVO_D3_PIN        D3
+#define SERVO_COUNT         4
+#define SERVO_SEQUENCE_INTERVAL_MS  500
+#define SERVO_SPEED_DELAY_MS        10
+#define SERVO_STEP_SIZE             5
 
-// RGB LED strip 
-#define LED_PIN             D1
-#define LED_COUNT           40
+// RGB LED strip
+#define LED_PIN             D10
+#define LED_COUNT           26
 #define LED_BRIGHTNESS      200
 #define LED_OVR_DURATION    1000
 

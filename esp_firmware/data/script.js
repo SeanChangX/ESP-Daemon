@@ -262,7 +262,7 @@ var chartT = new Highcharts.Chart({
   },
   series: [
     {
-      name: 'Battery Voltage',
+      name: 'Battery Voltage [V]',
       type: 'line',
       color: '#e53935',
       marker: {
@@ -273,13 +273,24 @@ var chartT = new Highcharts.Chart({
       lineWidth: 3
     },
     {
-      name: 'Filter Value',
+      name: 'Battery Current [A]',
       type: 'line',
       color: '#ff7043',
       marker: {
         symbol: 'square',
         radius: 4,
         fillColor: '#ff7043',
+      },
+      lineWidth: 3
+    },
+    {
+      name: 'Battery Power [W]',
+      type: 'line',
+      color: '#66bb6a',
+      marker: {
+        symbol: 'diamond',
+        radius: 4,
+        fillColor: '#66bb6a',
       },
       lineWidth: 3
     },
@@ -300,7 +311,7 @@ var chartT = new Highcharts.Chart({
   },
   yAxis: {
     title: {
-      text: 'Voltage',
+      text: 'HERMES',
       style: {
         color: document.documentElement.classList.contains('light-mode') ? '#333333' : '#f5f5f5',
         fontSize: '13px'
@@ -336,8 +347,9 @@ function plotData(jsonValue) {
 
   // Map keys to chart series indices
   const seriesMapping = {
-    sensor: 0, // Corresponds to 'Battery Voltage'
-    GND: 1     // Corresponds to 'Filter Value'
+    sensor: 0,  // Corresponds to 'Battery Voltage (V)'
+    current: 1, // Corresponds to 'Battery Current (A)'
+    power: 2    // Corresponds to 'Battery Power (W)'
   };
 
   var keys = Object.keys(jsonValue);
@@ -408,25 +420,25 @@ window.addEventListener('orientationchange', function() {
   setTimeout(handleResize, 300);
 });
 
-// Emergency button functionality
+// Landing gear button functionality
 document.addEventListener('DOMContentLoaded', function() {
-  const enableButton = document.getElementById('emergencyEnable');
-  const disableButton = document.getElementById('emergencyDisable');
+  const takeoffButton = document.getElementById('landingGearTakeoff');
+  const landingButton = document.getElementById('landingGearLanding');
   const actionButton = document.getElementById('actionButton');
   
-  if (enableButton && disableButton) {
-    // Enable emergency button handler
-    enableButton.addEventListener('click', function() {
-      sendEmergencyCommand(true);
+  if (takeoffButton && landingButton) {
+    // Takeoff button handler
+    takeoffButton.addEventListener('click', function() {
+      sendLandingGearCommand(true);
       this.classList.add('active');
-      disableButton.classList.remove('active');
+      landingButton.classList.remove('active');
     });
     
-    // Disable emergency button handler
-    disableButton.addEventListener('click', function() {
-      sendEmergencyCommand(false);
+    // Landing button handler
+    landingButton.addEventListener('click', function() {
+      sendLandingGearCommand(false);
       this.classList.add('active');
-      enableButton.classList.remove('active');
+      takeoffButton.classList.remove('active');
     });
   }
   
@@ -484,11 +496,11 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 });
 
-// Function to send emergency command to the server
-function sendEmergencyCommand(enableEmergency) {
+// Function to send landing gear command to the server
+function sendLandingGearCommand(isTakeoff) {
   // Create XMLHttpRequest object
   var xhr = new XMLHttpRequest();
-  xhr.open("POST", "/emergency", true);
+  xhr.open("POST", "/landing_gear", true);
   xhr.setRequestHeader("Content-Type", "application/json");
   
   // Set callback function
@@ -497,17 +509,17 @@ function sendEmergencyCommand(enableEmergency) {
       if (xhr.status === 200) {
         try {
           var data = JSON.parse(xhr.responseText);
-          // console.log('Emergency command sent successfully:', data);
+          // console.log('Landing gear command sent successfully:', data);
           
           // Add UI feedback
-          const status = enableEmergency ? 'ENABLED' : 'DISABLED';
-          const statusClass = enableEmergency ? 'emergency-enabled' : 'emergency-disabled';
+          const status = isTakeoff ? 'TAKEOFF' : 'LANDING';
+          const statusClass = isTakeoff ? 'emergency-enabled' : 'emergency-disabled';
           
           // Create or update status message
-          let statusMsg = document.getElementById('emergencyStatus');
+          let statusMsg = document.getElementById('landingGearStatus');
           if (!statusMsg) {
             statusMsg = document.createElement('div');
-            statusMsg.id = 'emergencyStatus';
+            statusMsg.id = 'landingGearStatus';
             statusMsg.className = 'status-item';
             const statusContainer = document.querySelector('.status-items-container');
             if (statusContainer) {
@@ -516,17 +528,17 @@ function sendEmergencyCommand(enableEmergency) {
           }
           
           // Update status message
-          statusMsg.textContent = 'ROBOT - ' + status;
+          statusMsg.textContent = 'LANDING GEAR - ' + status;
           statusMsg.className = 'status-item ' + statusClass;
         } catch (e) {
           console.error('Error parsing response:', e);
         }
       } else {
-        console.error('Error sending emergency command: Network response was not ok');
+        console.error('Error sending landing gear command: Network response was not ok');
       }
     }
   };
   
   // Send request
-  xhr.send(JSON.stringify({ emergency: enableEmergency }));
+  xhr.send(JSON.stringify({ landing_gear: isTakeoff }));
 }

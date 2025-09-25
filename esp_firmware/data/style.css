@@ -278,6 +278,71 @@ p {
   font-weight: bold;
 }
 
+/* Landing gear controls */
+.landing-gear-controls {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(229, 57, 53, 0.3);
+}
+
+.landing-gear-title {
+  font-size: 1.3rem;
+  font-weight: bold;
+  color: var(--primary-color);
+  margin-bottom: 0.8rem;
+  text-align: left;
+}
+
+.landing-gear-buttons {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.landing-gear-btn {
+  flex: 1;
+  padding: 0.7rem 0;
+  font-size: 1.1rem;
+  font-weight: bold;
+  border: none;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.takeoff-btn {
+  background-color: #d32f2f;
+  color: white;
+}
+
+.takeoff-btn:hover {
+  background-color: #b71c1c;
+  box-shadow: 0 2px 5px rgba(183, 28, 28, 0.5);
+}
+
+.takeoff-btn.active {
+  background-color: #b71c1c;
+  box-shadow: 0 2px 5px rgba(183, 28, 28, 0.5);
+  border: 2px solid #ffffff;
+}
+
+.landing-btn {
+  background-color: #424242;
+  color: white;
+}
+
+.landing-btn:hover {
+  background-color: #212121;
+  box-shadow: 0 2px 5px rgba(33, 33, 33, 0.5);
+}
+
+.landing-btn.active {
+  background-color: #212121;
+  box-shadow: 0 2px 5px rgba(33, 33, 33, 0.5);
+  border: 2px solid #ffffff;
+}
+
+
 /* Floating buttons container */
 .floating-buttons {
   position: fixed;

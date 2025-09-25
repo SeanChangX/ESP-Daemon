@@ -10,14 +10,11 @@
 extern AsyncEventSource events;
 
 float Vbattf = 0.0;
-uint32_t Vbatt = 0;
-float offset = VOLTMETER_OFFSET;
 volatile int interruptCounter = 0;
 hw_timer_t* _timer = NULL;
 portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
 
 void initVoltmeter() {
-  pinMode(VOLTMETER_PIN, INPUT);
   _timer = timerBegin(0, 80, true);
   timerAttachInterrupt(_timer, &onTimer, true);
   timerAlarmWrite(_timer, TIMER_PERIOD_US, true);
@@ -31,17 +28,16 @@ void IRAM_ATTR onTimer() {
 }
 
 void voltmeter() {
-  Vbatt = 0;
-  for (int i = 0; i < SLIDING_WINDOW_SIZE; i++) {
-    Vbatt += analogReadMilliVolts(VOLTMETER_PIN);
-  }
-  Vbattf = VOLTMETER_CALIBRATION * Vbatt / SLIDING_WINDOW_SIZE / 1000.0 + offset;
+  // Get battery voltage from ROS data instead of GPIO
+  Vbattf = current_voltage;
   if (Vbattf < 3) Vbattf = 0.0;
 }
 
 String getSensorReadings() {
   JSONVar readings;
   readings["sensor"] = String(Vbattf);
+  readings["current"] = String(current_current);
+  readings["power"] = String(current_power);
   readings["GND"] = 0;
 
   if      (Vbattf < 3)    { readings["batteryStatus"] = "DISCONNECTED";     sensor_mode = BATT_DISCONNECTED; }

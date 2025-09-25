@@ -1,7 +1,6 @@
 #include "config.h"
 #include "led_control.h"
 #include "voltmeter.h"
-#include "espnow_comm.h"
 #include "ros_node.h"
 #include "web_server.h"
 #include "wifi_config.h"
@@ -37,6 +36,10 @@ void microROSTask(void* pvParameters) {
       default:
         break;
     }
+    
+    // Update servo movements for smooth control and sequencing
+    updateServoMovement();
+    
     // vTaskDelay(5 / portTICK_PERIOD_MS);
   }
 }
@@ -59,7 +62,6 @@ void setup() {
 
   initSPIFFS();
   initWiFi();
-  initESPNow();
   initWebServer();
 }
 

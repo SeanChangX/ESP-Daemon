@@ -1,7 +1,7 @@
 #include "web_server.h"
 #include "config.h"
 
-#include "ros_node.h"   // Include for emergency_msg
+#include "ros_node.h"
 
 #include <SPIFFS.h>
 #include <Arduino_JSON.h>
@@ -11,8 +11,8 @@
 AsyncWebServer server(80);
 AsyncEventSource events("/events");
 
-// For accessing the ROS emergency message
-extern std_msgs__msg__Bool emergency_msg;
+// For accessing the ROS landing gear message
+extern std_msgs__msg__Bool landing_gear_msg;
 
 void initSPIFFS() {
   if (!SPIFFS.begin()) {
@@ -39,26 +39,26 @@ void initWebServer() {
     request->send(200, "application/json", "{}");
   });
 
-  // Emergency button endpoint - handles both form data and JSON requests
-  server.on("/emergency", HTTP_POST, 
+  // Landing gear endpoint - handles both form data and JSON requests
+  server.on("/landing_gear", HTTP_POST, 
     [](AsyncWebServerRequest* request) {
       String response = "{\"success\":false,\"message\":\"Invalid request\"}";
       
       // Process form data submission
-      if (request->hasParam("emergency", true)) {
-        String emergencyValue = request->getParam("emergency", true)->value();
+      if (request->hasParam("landing_gear", true)) {
+        String landingGearValue = request->getParam("landing_gear", true)->value();
         
-        // Set emergency state based on parameter value
-        if (emergencyValue == "true" || emergencyValue == "1") {
-          emergency_msg.data = true;
-          emergency_callback(&emergency_msg);
-          response = "{\"success\":true,\"message\":\"Emergency mode ENABLED\"}";
-          // Serial.println("Emergency mode ENABLED via web interface");
-        } else if (emergencyValue == "false" || emergencyValue == "0") {
-          emergency_msg.data = false;
-          emergency_callback(&emergency_msg);
-          response = "{\"success\":true,\"message\":\"Emergency mode DISABLED\"}";
-          // Serial.println("Emergency mode DISABLED via web interface");
+        // Set landing gear state based on parameter value
+        if (landingGearValue == "true" || landingGearValue == "1") {
+          landing_gear_msg.data = true;
+          landing_gear_callback(&landing_gear_msg);
+          response = "{\"success\":true,\"message\":\"Landing gear RETRACTED\"}";
+          // Serial.println("Landing gear RETRACTED via web interface");
+        } else if (landingGearValue == "false" || landingGearValue == "0") {
+          landing_gear_msg.data = false;
+          landing_gear_callback(&landing_gear_msg);
+          response = "{\"success\":true,\"message\":\"Landing gear EXTENDED\"}";
+          // Serial.println("Landing gear EXTENDED via web interface");
         }
       }
       
@@ -67,25 +67,25 @@ void initWebServer() {
         String jsonStr = (const char*)request->_tempObject;
         JSONVar jsonObj = JSON.parse(jsonStr);
         
-        if (JSON.typeof(jsonObj) == "object" && jsonObj.hasOwnProperty("emergency")) {
-          bool emergencyState = (bool)jsonObj["emergency"];
-          emergency_msg.data = emergencyState;
+        if (JSON.typeof(jsonObj) == "object" && jsonObj.hasOwnProperty("landing_gear")) {
+          bool landingGearState = (bool)jsonObj["landing_gear"];
+          landing_gear_msg.data = landingGearState;
           
-          // Call emergency callback to ensure immediate action
-          emergency_callback(&emergency_msg);
+          // Call landing gear callback to ensure immediate action
+          landing_gear_callback(&landing_gear_msg);
           
-          String status = emergencyState ? "ENABLED" : "DISABLED";
-          response = "{\"success\":true,\"message\":\"Emergency mode " + status + "\"}";
+          String status = landingGearState ? "RETRACTED" : "EXTENDED";
+          response = "{\"success\":true,\"message\":\"Landing gear " + status + "\"}";
           
-          // Serial.print("Emergency mode ");
+          // Serial.print("Landing gear ");
           // Serial.print(status);
           // Serial.println(" via web interface (JSON)");
           
           // Broadcast change as SSE event
           JSONVar statusObj;
-          statusObj["emergency"] = emergencyState;
+          statusObj["landing_gear"] = landingGearState;
           statusObj["status"] = status;
-          events.send(JSON.stringify(statusObj), "emergency_update", millis());
+          events.send(JSON.stringify(statusObj), "landing_gear_update", millis());
         }
         
         // Free allocated memory

@@ -1,13 +1,14 @@
 services:
   esp-daemon:
+    platform: linux/arm64
     build: 
       context: .
       dockerfile: Dockerfile
       target: final
       args:
-        ROS_DISTRO: ${ROS_DISTRO}
+        ROS_DISTRO: ${ROS_DISTRO:-humble}
         USERNAME: ros
-    image: scx/esp-daemon:${ROS_DISTRO}
+    image: scx/esp-daemon:arm64
     container_name: esp-daemon
     stdin_open: true
     tty: true
@@ -20,7 +21,7 @@ services:
     environment:
       - TERM=xterm-256color
       - DISPLAY=${DISPLAY}
-      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID}
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
       - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 
     volumes:

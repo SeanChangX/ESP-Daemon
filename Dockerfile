@@ -4,11 +4,32 @@
 ######################################################################
 
 ARG ROS_DISTRO=humble
-FROM osrf/ros:${ROS_DISTRO}-desktop AS base
+FROM ubuntu:22.04 AS base
 
 LABEL org.opencontainers.image.title="ESP Daemon"
 LABEL org.opencontainers.image.authors="scx@gapp.nthu.edu.tw"
 LABEL org.opencontainers.image.licenses="MIT"
+
+# Set timezone to avoid interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Taipei
+
+# Set up ROS repository
+RUN apt-get update && apt-get install -y \
+    curl \
+    gnupg2 \
+    lsb-release \
+    ca-certificates \
+    && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/ros2.list > /dev/null
+
+# Install ROS 2 Humble
+RUN apt-get update && apt-get install -y \
+    ros-humble-desktop \
+    python3-argcomplete \
+    python3-colcon-common-extensions \
+    python3-rosdep \
+    && rm -rf /var/lib/apt/lists/*
 
 ARG USERNAME=ros
 # Use the same UID and GID as the host user
@@ -39,10 +60,12 @@ FROM user-setup AS tools
 
 RUN apt-get update && apt-get install -y \
     tree \
+    git \
     vim \
     wget \
     unzip \
     python3-pip \
+    python3-vcstool \
     bash-completion \
     ros-humble-rmw-cyclonedds-cpp \
     ros-humble-foxglove-bridge

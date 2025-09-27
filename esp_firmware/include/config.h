@@ -8,8 +8,8 @@
 // micro-ROS
 #define ROS_NODE_NAME       "esp_daemon"
 #define ROS_DOMAIN_ID       0
-#define ROS_TIMER_MS        100
-#define MROS_TIMEOUT_MS     100
+#define ROS_TIMER_MS        500
+#define MROS_TIMEOUT_MS     1000
 #define MROS_PING_INTERVAL  1000
 
 // Servo control

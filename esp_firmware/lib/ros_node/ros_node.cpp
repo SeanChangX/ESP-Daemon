@@ -10,10 +10,12 @@
 // micro-ROS essential components
 rcl_publisher_t                 counter_publisher;
 rcl_subscription_t              landing_gear_subscriber;
-rcl_subscription_t              mavros_battery_subscriber;
+rcl_subscription_t              battery_voltage_subscriber;
+rcl_subscription_t              battery_current_subscriber;
 std_msgs__msg__Int32            counter_msg;
 std_msgs__msg__Bool             landing_gear_msg;
-sensor_msgs__msg__BatteryState  mavros_battery_msg;
+std_msgs__msg__Float32          battery_voltage_msg;
+std_msgs__msg__Float32          battery_current_msg;
 
 rclc_executor_t executor;
 rcl_allocator_t allocator;
@@ -25,8 +27,8 @@ rcl_timer_t timer;
 // Servo control for landing gear system
 Servo servo_d0, servo_d1, servo_d2, servo_d3;
 Servo* servos[SERVO_COUNT] = {&servo_d0, &servo_d1, &servo_d2, &servo_d3};
-int retracted_angles[4] = {125, 124, 120, 130};
-int extended_angles[4] = {42, 41, 37, 47};
+int retracted_angles[4] = {126, 124, 122, 131};
+int extended_angles[4] = {43, 41, 39, 48};
 bool is_gear_retracted = true;  // Start in takeoff state
 
 // New servo state management
@@ -54,12 +56,20 @@ void timer_callback(rcl_timer_t* timer, int64_t last_call_time) {
 }
 
 
-void mavros_battery_callback(const void* msgin) {
-  const sensor_msgs__msg__BatteryState* incoming = (const sensor_msgs__msg__BatteryState*)msgin;
+
+void battery_voltage_callback(const void* msgin) {
+  const std_msgs__msg__Float32* incoming = (const std_msgs__msg__Float32*)msgin;
   
-  current_voltage = incoming->voltage;
-  current_current = incoming->current;
-  // Calculate power (P = V * I)
+  // Simple voltage callback
+  current_voltage = incoming->data;
+  current_power = current_voltage * current_current;
+}
+
+void battery_current_callback(const void* msgin) {
+  const std_msgs__msg__Float32* incoming = (const std_msgs__msg__Float32*)msgin;
+  
+  // Simple current callback
+  current_current = incoming->data;
   current_power = current_voltage * current_current;
 }
 
@@ -94,7 +104,8 @@ void destroy_entities() {
 
   rcl_publisher_fini(&counter_publisher, &node);
   rcl_subscription_fini(&landing_gear_subscriber, &node);
-  rcl_subscription_fini(&mavros_battery_subscriber, &node);
+  rcl_subscription_fini(&battery_voltage_subscriber, &node);
+  rcl_subscription_fini(&battery_current_subscriber, &node);
 }
 
 bool create_entities() {
@@ -114,8 +125,8 @@ bool create_entities() {
     "/esp32_counter");
 
 
-  // Initialize executor with 3 handles (2 subscriptions + 1 timer)
-  unsigned int num_handles = 3;
+  // Initialize executor with 4 handles (3 subscriptions + 1 timer)
+  unsigned int num_handles = 4;
   executor = rclc_executor_get_zero_initialized_executor();
   rclc_executor_init(&executor, &support.context, num_handles, &allocator);
   rclc_executor_add_timer(&executor, &timer);
@@ -124,15 +135,23 @@ bool create_entities() {
     &landing_gear_subscriber,
     &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool),
-    "/robot_status/landing_gear");
+    "/landing_gear");
   rclc_executor_add_subscription(&executor, &landing_gear_subscriber, &landing_gear_msg, &landing_gear_callback, ON_NEW_DATA);
 
+
   rclc_subscription_init_default(
-    &mavros_battery_subscriber,
+    &battery_voltage_subscriber,
     &node,
-    ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, BatteryState),
-    "/mavros/battery");
-  rclc_executor_add_subscription(&executor, &mavros_battery_subscriber, &mavros_battery_msg, &mavros_battery_callback, ON_NEW_DATA);
+    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
+    "/battery_voltage");
+  rclc_executor_add_subscription(&executor, &battery_voltage_subscriber, &battery_voltage_msg, &battery_voltage_callback, ON_NEW_DATA);
+
+  rclc_subscription_init_default(
+    &battery_current_subscriber,
+    &node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
+    "/battery_current");
+  rclc_executor_add_subscription(&executor, &battery_current_subscriber, &battery_current_msg, &battery_current_callback, ON_NEW_DATA);
   
   return true;
 }

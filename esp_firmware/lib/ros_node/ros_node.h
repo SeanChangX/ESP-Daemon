@@ -6,7 +6,7 @@
 #include <rclc/executor.h>
 #include <std_msgs/msg/bool.h>
 #include <std_msgs/msg/int32.h>
-#include <sensor_msgs/msg/battery_state.h>
+#include <std_msgs/msg/float32.h>
 #include "config.h"
 
 #define EXECUTE_EVERY_N_MS(MS, X)  do { \
@@ -37,7 +37,8 @@ void initROS();
 bool create_entities();
 void destroy_entities();
 void landing_gear_callback(const void* msgin);
-void mavros_battery_callback(const void* msgin);
+void battery_voltage_callback(const void* msgin);
+void battery_current_callback(const void* msgin);
 void timer_callback(rcl_timer_t* timer, int64_t last_call_time);
 
 // New servo control functions

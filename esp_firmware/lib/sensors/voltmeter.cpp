@@ -40,8 +40,8 @@ String getSensorReadings() {
   readings["power"] = String(current_power);
   readings["GND"] = 0;
 
-  if      (Vbattf < 3)    { readings["batteryStatus"] = "DISCONNECTED";     sensor_mode = BATT_DISCONNECTED; }
-  else if (Vbattf < 17.5) { readings["batteryStatus"] = "LOW";              sensor_mode = BATT_LOW;          }
+  if      (Vbattf < 3.6)  { readings["batteryStatus"] = "DISCONNECTED";     sensor_mode = BATT_DISCONNECTED; }
+  else if (Vbattf < 14.4) { readings["batteryStatus"] = "LOW";              sensor_mode = BATT_LOW;          }
   else                    { readings["batteryStatus"] = "NORMAL";           sensor_mode = DEFAULT_MODE;      }
 
   switch (state) {

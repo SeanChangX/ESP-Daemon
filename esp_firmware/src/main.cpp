@@ -9,6 +9,7 @@
 
 TaskHandle_t Task1;
 TaskHandle_t Task2;
+TaskHandle_t Task3;
 
 void microROSTask(void* pvParameters) {
   while (true) {
@@ -26,7 +27,7 @@ void microROSTask(void* pvParameters) {
       case AGENT_CONNECTED:
         EXECUTE_EVERY_N_MS(MROS_PING_INTERVAL, state = (RMW_RET_OK == rmw_uros_ping_agent(MROS_TIMEOUT_MS, 1)) ? AGENT_CONNECTED : AGENT_DISCONNECTED;);
         if (state == AGENT_CONNECTED) {
-          rclc_executor_spin_some(&executor, RCL_MS_TO_NS(ROS_TIMER_MS));
+          rclc_executor_spin_some(&executor, RCL_MS_TO_NS(10));
         }
         break;
       case AGENT_DISCONNECTED:
@@ -37,10 +38,15 @@ void microROSTask(void* pvParameters) {
         break;
     }
     
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+  }
+}
+
+void servoControlTask(void* pvParameters) {
+  while (true) {
     // Update servo movements for smooth control and sequencing
     updateServoMovement();
-    
-    // vTaskDelay(5 / portTICK_PERIOD_MS);
+    vTaskDelay(5 / portTICK_PERIOD_MS);
   }
 }
 
@@ -56,9 +62,10 @@ void setup() {
   initLED();
   initVoltmeter();
 
-  xTaskCreatePinnedToCore(LEDTask,       "LED Task",    10000, NULL, 1, &Task1, 0);
-  xTaskCreatePinnedToCore(voltmeterTask, "Sensor Task", 10000, NULL, 1, &Task2, 0);
-  xTaskCreatePinnedToCore(microROSTask,  "microROS",    10000, NULL, 1, NULL,   0);
+  xTaskCreatePinnedToCore(LEDTask,         "LED Task",     10000, NULL, 2, &Task1, 0);
+  xTaskCreatePinnedToCore(voltmeterTask,   "Sensor Task",  10000, NULL, 1, &Task2, 0);
+  xTaskCreatePinnedToCore(servoControlTask,"Servo Task",   10000, NULL, 3, &Task3, 1);
+  xTaskCreatePinnedToCore(microROSTask,    "microROS",     10000, NULL, 1, NULL,   0);
 
   initSPIFFS();
   initWiFi();

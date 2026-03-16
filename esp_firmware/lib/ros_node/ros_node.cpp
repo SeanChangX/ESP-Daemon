@@ -27,8 +27,8 @@ rcl_timer_t timer;
 // Servo control for landing gear system
 Servo servo_d0, servo_d1, servo_d2, servo_d3;
 Servo* servos[SERVO_COUNT] = {&servo_d0, &servo_d1, &servo_d2, &servo_d3};
-int retracted_angles[4] = {126, 124, 122, 131};
-int extended_angles[4] = {43, 41, 39, 48};
+int retracted_angles[4] = {131, 131, 131, 131};
+int extended_angles[4] = {48, 48, 48, 48};
 bool is_gear_retracted = true;  // Start in takeoff state
 
 // New servo state management

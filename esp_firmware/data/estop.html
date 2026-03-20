@@ -74,6 +74,13 @@
                 </label>
               </div>
               <div class="settings-switch-row">
+                <label class="settings-switch-label" for="estopSwitchLogicInverted">Invert pressed/released logic</label>
+                <label class="switch-control">
+                  <input id="estopSwitchLogicInverted" type="checkbox">
+                  <span class="switch-slider"></span>
+                </label>
+              </div>
+              <div class="settings-switch-row">
                 <label class="settings-switch-label" for="estopWledEnabled">WLED Sync Enabled</label>
                 <label class="switch-control">
                   <input id="estopWledEnabled" type="checkbox">
@@ -89,7 +96,7 @@
               <label for="estopWledPreset">WLED E-Stop Preset (1-250)</label>
               <input id="estopWledPreset" type="number" min="1" max="250">
             </div>
-            <div class="hint">Default switch mode is active-low with internal pull-up. WLED sync will snapshot current state on press, apply preset, and restore snapshot on release.</div>
+            <div class="hint">Switch input uses internal pull resistors (active-low: pull-up, active-high: pull-down). Enable logic invert if your NC wiring makes pressed/released appear reversed. WLED sync will snapshot current state on press, apply preset, and restore snapshot on release.</div>
           </div>
         </div>
       </div>

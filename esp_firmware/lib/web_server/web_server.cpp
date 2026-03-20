@@ -115,6 +115,7 @@ static void handleEStopStatusGet() {
   doc["rawLevel"]             = getEStopSwitchRawLevel();
   doc["switchPin"]            = getAppSettings().estop_switch_pin;
   doc["switchActiveHigh"]     = getAppSettings().estop_switch_active_high;
+  doc["switchLogicInverted"]  = getAppSettings().estop_switch_logic_inverted;
   doc["targetMac"]            = getAppSettings().estop_target_mac;
   doc["targetPeerConfigured"] = isEStopPeerConfigured();
   doc["effectiveTargetMac"]   = getEStopTargetMac();

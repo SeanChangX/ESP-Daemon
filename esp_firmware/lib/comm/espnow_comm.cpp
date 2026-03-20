@@ -111,6 +111,7 @@ std::array<uint8_t, 6> g_estopPeerMac = {0, 0, 0, 0, 0, 0};
 String g_estopPeerMacText;
 uint8_t g_estopSwitchPinConfigured = 255;
 bool g_estopSwitchActiveHighConfigured = false;
+bool g_estopSwitchLogicInvertedConfigured = false;
 bool g_wledSnapshotValid = false;
 bool g_wledRestorePending = false;
 unsigned long g_wledLastRestoreAttemptMs = 0;
@@ -291,19 +292,24 @@ void configureEStopSwitchPin(bool forceReconfigure) {
   const AppSettings& settings = getAppSettings();
   if (!forceReconfigure &&
       settings.estop_switch_pin == g_estopSwitchPinConfigured &&
-      settings.estop_switch_active_high == g_estopSwitchActiveHighConfigured) {
+      settings.estop_switch_active_high == g_estopSwitchActiveHighConfigured &&
+      settings.estop_switch_logic_inverted == g_estopSwitchLogicInvertedConfigured) {
     return;
   }
 
   g_estopSwitchPinConfigured = settings.estop_switch_pin;
   g_estopSwitchActiveHighConfigured = settings.estop_switch_active_high;
+  g_estopSwitchLogicInvertedConfigured = settings.estop_switch_logic_inverted;
 
-  // Active-low uses INPUT_PULLUP so a pressed switch can pull the line low.
-  const uint8_t mode = settings.estop_switch_active_high ? INPUT : INPUT_PULLUP;
+  // Use internal pulls in both polarities to avoid floating GPIO noise:
+  // - active-low  -> INPUT_PULLUP  (pressed shorts to GND)
+  // - active-high -> INPUT_PULLDOWN (pressed drives to 3V3)
+  const uint8_t mode = settings.estop_switch_active_high ? INPUT_PULLDOWN : INPUT_PULLUP;
   pinMode(settings.estop_switch_pin, mode);
 
   // Reset debounce state after pin/logic changes.
   g_estopDebounceInitialized = false;
+  g_estopEdgeInitialized = false;
 }
 
 void sampleEStopSwitch() {
@@ -329,8 +335,9 @@ void sampleEStopSwitch() {
     g_estopSwitchRawLevel = g_estopLastObservedRawLevel;
   }
 
-  g_estopSwitchPressed =
+  const bool basePressed =
     (g_estopSwitchRawLevel == (settings.estop_switch_active_high ? HIGH : LOW));
+  g_estopSwitchPressed = settings.estop_switch_logic_inverted ? !basePressed : basePressed;
 
   if (!g_estopEdgeInitialized) {
     g_estopEdgeInitialized = true;

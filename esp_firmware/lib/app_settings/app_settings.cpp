@@ -138,6 +138,7 @@ void applyDefaults() {
   g_settings.estop_target_mac = "";
   g_settings.estop_switch_pin = 8;
   g_settings.estop_switch_active_high = false;
+  g_settings.estop_switch_logic_inverted = false;
   g_settings.estop_wled_enabled = false;
   g_settings.estop_wled_base_url = "";
   g_settings.estop_wled_preset = 1;
@@ -297,6 +298,7 @@ void loadFromJson(const JsonObjectConst& json) {
   loadString(json, "estopTargetMac",                g_settings.estop_target_mac);
   loadUInt8(json,  "estopSwitchPin",                g_settings.estop_switch_pin);
   loadBool(json,   "estopSwitchActiveHigh",         g_settings.estop_switch_active_high);
+  loadBool(json,   "estopSwitchLogicInverted",      g_settings.estop_switch_logic_inverted);
   loadBool(json,   "estopWledEnabled",              g_settings.estop_wled_enabled);
   loadString(json, "estopWledBaseUrl",              g_settings.estop_wled_base_url);
   loadUInt16(json, "estopWledPreset",               g_settings.estop_wled_preset);
@@ -431,6 +433,7 @@ void appSettingsToJson(JsonDocument& doc, bool include_pin_code) {
   doc["estopTargetMac"]             = g_settings.estop_target_mac;
   doc["estopSwitchPin"]             = g_settings.estop_switch_pin;
   doc["estopSwitchActiveHigh"]      = g_settings.estop_switch_active_high;
+  doc["estopSwitchLogicInverted"]   = g_settings.estop_switch_logic_inverted;
   doc["estopWledEnabled"]           = g_settings.estop_wled_enabled;
   doc["estopWledBaseUrl"]           = g_settings.estop_wled_base_url;
   doc["estopWledPreset"]            = g_settings.estop_wled_preset;

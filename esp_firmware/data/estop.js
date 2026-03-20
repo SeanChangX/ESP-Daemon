@@ -227,6 +227,7 @@ function loadSettings() {
       const targetInput = document.getElementById('estopTargetMac');
       const pinInput = document.getElementById('estopSwitchPin');
       const activeHighInput = document.getElementById('estopSwitchActiveHigh');
+      const logicInvertedInput = document.getElementById('estopSwitchLogicInverted');
       const wledEnabledInput = document.getElementById('estopWledEnabled');
       const wledBaseUrlInput = document.getElementById('estopWledBaseUrl');
       const wledPresetInput = document.getElementById('estopWledPreset');
@@ -240,6 +241,9 @@ function loadSettings() {
       }
       if (activeHighInput) {
         activeHighInput.checked = !!result.data.estopSwitchActiveHigh;
+      }
+      if (logicInvertedInput) {
+        logicInvertedInput.checked = !!result.data.estopSwitchLogicInverted;
       }
       if (wledEnabledInput) {
         wledEnabledInput.checked = !!result.data.estopWledEnabled;
@@ -310,6 +314,7 @@ function collectSavePayload() {
   const macInput = document.getElementById('estopTargetMac');
   const pinInput = document.getElementById('estopSwitchPin');
   const activeHighInput = document.getElementById('estopSwitchActiveHigh');
+  const logicInvertedInput = document.getElementById('estopSwitchLogicInverted');
   const wledEnabledInput = document.getElementById('estopWledEnabled');
   const wledBaseUrlInput = document.getElementById('estopWledBaseUrl');
   const wledPresetInput = document.getElementById('estopWledPreset');
@@ -348,6 +353,7 @@ function collectSavePayload() {
     estopTargetMac: normalizedMac,
     estopSwitchPin: Math.round(pinValue),
     estopSwitchActiveHigh: !!(activeHighInput && activeHighInput.checked),
+    estopSwitchLogicInverted: !!(logicInvertedInput && logicInvertedInput.checked),
     estopWledEnabled: wledEnabled,
     estopWledBaseUrl: wledBaseUrl,
     estopWledPreset: Math.round(wledPresetValue)

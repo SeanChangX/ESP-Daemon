@@ -606,7 +606,10 @@ function exportSettings() {
     .then((blob) => {
       const url = URL.createObjectURL(blob);
       const now = new Date();
-      const stamp = now.toISOString().replace(/[:.]/g, '-');
+      const stamp =
+        String(now.getFullYear()) + '-' +
+        String(now.getMonth() + 1).padStart(2, '0') + '-' +
+        String(now.getDate()).padStart(2, '0');
       const link = document.createElement('a');
       link.href = url;
       link.download = 'settings_export_' + stamp + '.json';

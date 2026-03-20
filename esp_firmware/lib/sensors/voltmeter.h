@@ -7,7 +7,7 @@ extern float Vbattf;
 
 void initVoltmeter();
 void voltmeter();
-void IRAM_ATTR onTimer();
+void onTimer();
 void voltmeterTask(void* pvParameters);
 String getSensorReadings();
 

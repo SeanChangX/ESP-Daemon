@@ -1,44 +1,297 @@
 #include "wifi_config.h"
+
 #include "config.h"
+#include "app_settings.h"
 
 #include <Arduino.h>
+#include <cstring>
 #include <ESPmDNS.h>
-#include <WiFiManager.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <NetWizard.h>
 
 int wifi_channel = 0;
 
-void initWiFi() {
-  WiFiManager wifiManager;
-  wifiManager.setEnableConfigPortal(false);
+namespace {
 
-  const int maxRetries = 10;
-  int retryCount = 0;
-  bool connected = false;
+AsyncWebServer netWizardServer(80);
+NetWizard netWizard(&netWizardServer);
+bool netWizardConfigured = false;
+bool mdnsStarted = false;
+bool netWizardHttpReleased = false;
+bool restartAfterProvisioningPending = false;
+unsigned long restartAfterProvisioningAtMs = 0;
+String mdnsName;
 
-  while (retryCount < maxRetries && !connected) {
-    Serial.printf("Attempting to connect to WiFi (%d/%d)...\n", retryCount + 1, maxRetries);
-    if (wifiManager.autoConnect(HOSTNAME)) {
-      connected = true;
-      Serial.println("WiFi connected!");
-    } else {
-      Serial.println("WiFi connection failed, retrying...");
-      retryCount++;
-      delay(3000);
-    }
+String getProvisioningSsid() {
+  const uint64_t efuse = ESP.getEfuseMac();
+  const uint32_t macTail = static_cast<uint32_t>(efuse & 0xFFFFFFULL);
+  char suffix[7];
+  snprintf(suffix, sizeof(suffix), "%06X", static_cast<unsigned>(macTail));
+  return String("ESP-Daemon_") + suffix;
+}
+
+String getDeviceNameLower() {
+  // device_name comes from Settings and is sanitized in app_settings.cpp.
+  // Re-apply lowercase here to ensure WiFi/MDNS match exactly.
+  String host = getAppSettings().device_name;
+  host.trim();
+  host.toLowerCase();
+  if (host.length() == 0) {
+    // Fallback: avoid empty hostname/MDNS.
+    host = getProvisioningSsid();
+    host.toLowerCase();
+  }
+  return host;
+}
+
+void applyMdnsName() {
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
   }
 
-  if (!connected) {
-    Serial.println("Entering WiFi configuration portal...");
-    wifiManager.setEnableConfigPortal(true);
-    wifiManager.startConfigPortal(HOSTNAME);
+  const String requestedName = getDeviceNameLower();
+  if (mdnsStarted && requestedName == mdnsName) {
+    return;
   }
 
-  Serial.println(WiFi.localIP());
+  if (mdnsStarted) {
+    MDNS.end();
+    mdnsStarted = false;
+  }
 
-  if (!MDNS.begin(MDNS_NAME)) {
-    Serial.println("mDNS init failed");
+  if (MDNS.begin(requestedName.c_str())) {
+    mdnsStarted = true;
+    mdnsName = requestedName;
+    DAEMON_LOGF("mDNS started: %s.local\n", requestedName.c_str());
   } else {
-    Serial.println("mDNS started");
+    DAEMON_LOGLN("mDNS init failed");
   }
-  wifi_channel = WiFi.channel();
+}
+
+void ensurePortalIfDisconnected() {
+  static unsigned long lastPortalStartMs = 0;
+  static unsigned long disconnectedSinceMs = 0;
+  static unsigned long lastReconnectOnlyLogMs = 0;
+  constexpr unsigned long kPortalRestartCooldownMs = 30000;
+  constexpr unsigned long kPortalStartGraceMs = 45000;
+
+  if (WiFi.status() == WL_CONNECTED) {
+    disconnectedSinceMs = 0;
+    return;
+  }
+
+  // Once disconnected, allow NetWizard HTTP server to be resumed by portal.
+  netWizardHttpReleased = false;
+
+  if (disconnectedSinceMs == 0) {
+    disconnectedSinceMs = millis();
+  }
+
+  // If AP mode is already active, avoid repeatedly restarting the portal.
+  if ((WiFi.getMode() & WIFI_AP) != 0) {
+    return;
+  }
+
+  // Give STA reconnect some time before re-opening the captive portal.
+  if ((millis() - disconnectedSinceMs) < kPortalStartGraceMs) {
+    return;
+  }
+
+  const unsigned long now = millis();
+  if ((now - lastPortalStartMs) < kPortalRestartCooldownMs) {
+    return;
+  }
+
+  // If credentials exist, prioritize silent auto-reconnect and avoid forcing
+  // users back into captive portal after successful provisioning.
+  const char* savedSsid = netWizard.getSSID();
+  if (savedSsid != nullptr && std::strlen(savedSsid) > 0) {
+    if ((now - lastReconnectOnlyLogMs) >= 30000) {
+      lastReconnectOnlyLogMs = now;
+      DAEMON_LOGF("WiFi disconnected, retrying saved SSID (%s), portal suppressed\n", savedSsid);
+    }
+    return;
+  }
+
+  if (netWizard.getPortalState() == NetWizardPortalState::IDLE) {
+    lastPortalStartMs = now;
+    DAEMON_LOGLN("NetWizard portal restart requested");
+    netWizard.startPortal();
+  }
+}
+
+void reconnectSavedWifiIfDisconnected() {
+  static unsigned long lastReconnectAttemptMs = 0;
+  constexpr unsigned long kReconnectAttemptIntervalMs = 10000;
+
+  if (WiFi.status() == WL_CONNECTED) {
+    return;
+  }
+
+  // Avoid interfering when NetWizard is currently handling a portal connect flow.
+  const NetWizardPortalState portalState = netWizard.getPortalState();
+  if (portalState == NetWizardPortalState::CONNECTING_WIFI ||
+      portalState == NetWizardPortalState::WAITING_FOR_CONNECTION) {
+    return;
+  }
+
+  const char* ssid = netWizard.getSSID();
+  if (ssid == nullptr || std::strlen(ssid) == 0) {
+    return;
+  }
+
+  const unsigned long now = millis();
+  if ((now - lastReconnectAttemptMs) < kReconnectAttemptIntervalMs) {
+    return;
+  }
+  lastReconnectAttemptMs = now;
+
+  const wifi_mode_t mode = WiFi.getMode();
+  if ((mode & WIFI_AP) != 0) {
+    WiFi.mode(WIFI_AP_STA);
+  } else {
+    WiFi.mode(WIFI_STA);
+  }
+
+  String deviceName = getDeviceNameLower();
+  WiFi.setHostname(deviceName.c_str());
+
+  if (netWizard.connect()) {
+    DAEMON_LOGF("WiFi reconnect attempt -> %s\n", ssid);
+  }
+}
+
+void configureNetWizard() {
+  if (netWizardConfigured) {
+    return;
+  }
+
+  netWizard.setStrategy(NetWizardStrategy::NON_BLOCKING);
+  netWizard.setConnectTimeout(15000);
+  // NetWizard treats timeout=0 as immediate timeout. Use a very large timeout
+  // to keep portal available effectively "forever" for field provisioning.
+  netWizard.setPortalTimeout(0xFFFFFFFFUL);
+  netWizard.onPortalState([](NetWizardPortalState state) {
+    switch (state) {
+      case NetWizardPortalState::IDLE:
+        DAEMON_LOGLN("NetWizard portal state: IDLE");
+        break;
+      case NetWizardPortalState::CONNECTING_WIFI:
+        DAEMON_LOGLN("NetWizard portal state: CONNECTING_WIFI");
+        break;
+      case NetWizardPortalState::WAITING_FOR_CONNECTION:
+        DAEMON_LOGLN("NetWizard portal state: WAITING_FOR_CONNECTION");
+        break;
+      case NetWizardPortalState::SUCCESS:
+        DAEMON_LOGLN("NetWizard portal state: SUCCESS");
+        if (!restartAfterProvisioningPending) {
+          constexpr unsigned long kRestartDelayMs = 1500;
+          restartAfterProvisioningPending = true;
+          restartAfterProvisioningAtMs = millis() + kRestartDelayMs;
+          DAEMON_LOGLN("Provisioning success -> reboot scheduled");
+        }
+        break;
+      case NetWizardPortalState::FAILED:
+        DAEMON_LOGLN("NetWizard portal state: FAILED");
+        break;
+      case NetWizardPortalState::TIMEOUT:
+        DAEMON_LOGLN("NetWizard portal state: TIMEOUT");
+        break;
+      default:
+        break;
+    }
+  });
+  netWizardConfigured = true;
+}
+
+void handleProvisioningRestart() {
+  if (!restartAfterProvisioningPending) {
+    return;
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+
+  const long remainingMs = static_cast<long>(restartAfterProvisioningAtMs - millis());
+  if (remainingMs > 0) {
+    return;
+  }
+
+  DAEMON_LOGLN("Rebooting to apply network state cleanly...");
+  delay(50);
+  ESP.restart();
+}
+
+void releaseNetWizardHttpIfConnected() {
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+
+  if (netWizardHttpReleased) {
+    return;
+  }
+
+  // Ensure portal/AP mode is closed after successful provisioning.
+  if ((WiFi.getMode() & WIFI_AP) != 0 || netWizard.getPortalState() != NetWizardPortalState::IDLE) {
+    netWizard.stopPortal();
+  }
+
+  // NetWizard currently removes handlers but does not always close the
+  // AsyncWebServer listener. Release port 80 explicitly so the main WebServer
+  // can serve index/settings reliably.
+  netWizardServer.end();
+  netWizardHttpReleased = true;
+  DAEMON_LOGLN("NetWizard HTTP listener released (port 80)");
+}
+
+void updateWifiChannelCache() {
+  wifi_channel = (WiFi.status() == WL_CONNECTED) ? WiFi.channel() : getAppSettings().espnow_channel;
+}
+
+} // namespace
+
+void initWiFi() {
+  configureNetWizard();
+
+  String deviceName = getDeviceNameLower();
+  String provisioningSsid = getProvisioningSsid();
+  netWizard.setHostname(deviceName.c_str());
+
+  WiFi.setSleep(false);
+
+  DAEMON_LOGF("Starting NetWizard auto-connect (AP SSID: %s, open AP)\n", provisioningSsid.c_str());
+  netWizard.autoConnect(provisioningSsid.c_str(), "");
+
+  if (WiFi.status() == WL_CONNECTED) {
+    DAEMON_LOGF("WiFi connected: %s\n", WiFi.localIP().toString().c_str());
+    releaseNetWizardHttpIfConnected();
+  } else {
+    DAEMON_LOGLN("WiFi not connected, configuration AP remains active");
+    ensurePortalIfDisconnected();
+  }
+
+  applyMdnsName();
+  updateWifiChannelCache();
+}
+
+void handleWiFi() {
+  netWizard.loop();
+  handleProvisioningRestart();
+  reconnectSavedWifiIfDisconnected();
+  ensurePortalIfDisconnected();
+  updateWifiChannelCache();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    releaseNetWizardHttpIfConnected();
+    applyMdnsName();
+  }
+}
+
+void refreshNetworkIdentity() {
+  String deviceName = getDeviceNameLower();
+  netWizard.setHostname(deviceName.c_str());
+  WiFi.setHostname(deviceName.c_str());
+  applyMdnsName();
 }

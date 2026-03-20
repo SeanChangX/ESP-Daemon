@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>ESP-Daemon</title>
+    <link rel="stylesheet" href="style.css?v=pinfix1">
+  </head>
+  <body>
+    <div class="topnav">
+      <h1>ESP-Daemon</h1>
+      <div class="topnav-meta" aria-label="Device">
+        <div class="topnav-meta__chip"><span class="topnav-meta__label">MAC:</span><span id="deviceMac" class="topnav-meta__value">00-00-00-00-00-00</span></div>
+        <div class="topnav-meta__chip"><span class="topnav-meta__label">VER:</span><span id="deviceVersion" class="topnav-meta__value">0.0.0</span></div>
+      </div>
+    </div>
+
+    <div id="settingsPinGate" class="settings-pin-gate" hidden>
+      <div class="settings-pin-gate__panel" role="dialog" aria-modal="true" aria-labelledby="settingsPinGateTitle">
+        <h2 class="settings-pin-gate__title" id="settingsPinGateTitle">Unlock settings</h2>
+        <p class="settings-pin-gate__hint">PIN protection is on. Enter your PIN to view and change settings.</p>
+        <p id="settingsGatePreviewNote" class="settings-pin-gate__preview-note" hidden>Go Live: this screen is for layout preview only. Unlock needs the ESP; remove ?previewpin to edit settings locally.</p>
+        <div class="field settings-pin-gate__field">
+          <label for="settingsGatePinInput">PIN</label>
+          <input id="settingsGatePinInput" type="password" autocomplete="current-password" maxlength="32">
+        </div>
+        <button type="button" class="btn settings-pin-gate__btn" id="settingsGateUnlockBtn">Unlock</button>
+        <p id="settingsGateError" class="settings-pin-gate__err" role="alert"></p>
+      </div>
+    </div>
+
+    <div id="settingsMain" class="settings-wrap" hidden>
+      <div class="settings-grid">
+        <div class="settings-col">
+        <div class="settings-card">
+          <h3>Identity & Security</h3>
+          <div class="field"><label>Device Name</label><input id="deviceName" type="text"></div>
+          <div class="field"><label>Control Panel shortcut URL</label><input id="controlPanelUrl" type="text" placeholder="https://scx.tw/links" maxlength="192" autocomplete="off"></div>
+          <div class="hint">Opened by the Control Panel button on the status page (short press).<br>Default: https://scx.tw/links.</div>
+          <div class="settings-toggle-stack">
+            <div class="settings-switch-row">
+              <label class="settings-switch-label" for="pinProtectionEnabled">Enable PIN Protection</label>
+              <label class="switch-control">
+                <input id="pinProtectionEnabled" type="checkbox">
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+          </div>
+          <div class="field"><label>PIN Code (min 4 characters)</label><input id="pinCode" type="password" autocomplete="new-password" maxlength="32"></div>
+        </div>
+
+        <div class="settings-card">
+          <h3>ROS</h3>
+          <div class="field"><label>ROS Node Name</label><input id="rosNodeName" type="text"></div>
+          <div class="field"><label>ROS Domain ID</label><input id="rosDomainId" type="number" min="0" max="232"></div>
+          <div class="field"><label>ROS Timer (ms)</label><input id="rosTimerMs" type="number" min="1"></div>
+          <div class="field"><label>micro-ROS Timeout (ms)</label><input id="mrosTimeoutMs" type="number" min="1"></div>
+          <div class="field"><label>micro-ROS Ping Interval (ms)</label><input id="mrosPingIntervalMs" type="number" min="10"></div>
+        </div>
+
+        <div class="settings-card">
+          <h3>LED</h3>
+          <div class="field"><label>LED Pin</label><input id="ledPin" type="number" min="0" max="48"></div>
+          <div class="field"><label>LED Count</label><input id="ledCount" type="number" min="1" max="1024"></div>
+          <div class="field"><label>LED Brightness (0-255)</label><input id="ledBrightness" type="number" min="0" max="255"></div>
+          <div class="field"><label>LED Override Duration (ms)</label><input id="ledOverrideDurationMs" type="number" min="0"></div>
+        </div>
+
+        <div class="settings-card">
+          <h3>E-Stop MAC Whitelist</h3>
+          <div class="field">
+            <label>ESP-NOW Channel (1-13, default 6)</label>
+            <input id="espNowChannel" type="number" min="1" max="13">
+          </div>
+          <div class="field mac-whitelist-field">
+            <label for="emergencyMacInput">MAC address</label>
+            <div class="mac-whitelist-add__row">
+              <input id="emergencyMacInput" type="text" inputmode="text" autocomplete="off" placeholder="AA-BB-CC-DD-EE-FF" maxlength="17" spellcheck="false">
+              <button type="button" class="btn" id="emergencyMacAddBtn">ADD</button>
+            </div>
+            <p id="emergencyMacError" class="mac-whitelist-err" role="alert"></p>
+            <ul id="emergencyMacList" class="mac-whitelist-list" aria-label="Whitelisted MAC addresses"></ul>
+          </div>
+        </div>
+        </div>
+
+        <div class="settings-col">
+        <div class="settings-card">
+          <h3>Runtime Modules</h3>
+          <div class="settings-toggle-stack">
+            <div class="settings-switch-row">
+              <label class="settings-switch-label" for="runtimeEspNowEnabled">ESP-NOW</label>
+              <label class="switch-control">
+                <input id="runtimeEspNowEnabled" type="checkbox">
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <div class="settings-switch-row">
+              <label class="settings-switch-label" for="runtimeMicroRosEnabled">micro-ROS</label>
+              <label class="switch-control">
+                <input id="runtimeMicroRosEnabled" type="checkbox">
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <div class="settings-switch-row">
+              <label class="settings-switch-label" for="runtimeLedEnabled">LED Task</label>
+              <label class="switch-control">
+                <input id="runtimeLedEnabled" type="checkbox">
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <div class="settings-switch-row">
+              <label class="settings-switch-label" for="runtimeSensorEnabled">Sensor Task</label>
+              <label class="switch-control">
+                <input id="runtimeSensorEnabled" type="checkbox">
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-card">
+          <h3>GPIO & Logic</h3>
+          <div class="field"><label>Chassis Switch Pin</label><input id="chassisSwitchPin" type="number" min="0" max="48"></div>
+          <div class="field"><label>Mission Switch Pin</label><input id="missionSwitchPin" type="number" min="0" max="48"></div>
+          <div class="field"><label>Neg Pressure Switch Pin</label><input id="negPressureSwitchPin" type="number" min="0" max="48"></div>
+          <div class="field"><label>Chassis Power Pin</label><input id="chassisPowerPin" type="number" min="0" max="48"></div>
+          <div class="field"><label>Mission Power 12V Pin</label><input id="missionPower12vPin" type="number" min="0" max="48"></div>
+          <div class="field"><label>Mission Power 7.4V Pin</label><input id="missionPower7v4Pin" type="number" min="0" max="48"></div>
+          <div class="field"><label>Neg Pressure Power Pin</label><input id="negPressurePowerPin" type="number" min="0" max="48"></div>
+          <div class="settings-toggle-stack">
+            <div class="settings-switch-row">
+              <label class="settings-switch-label" for="switchActiveHigh">Switch active when HIGH</label>
+              <label class="switch-control">
+                <input id="switchActiveHigh" type="checkbox">
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <div class="settings-switch-row">
+              <label class="settings-switch-label" for="powerActiveHigh">Power output active when HIGH</label>
+              <label class="switch-control">
+                <input id="powerActiveHigh" type="checkbox">
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-card">
+          <h3>Voltmeter</h3>
+          <div class="field"><label>Voltmeter Pin</label><input id="voltmeterPin" type="number" min="0" max="48"></div>
+          <div class="field"><label>Divider R1</label><input id="voltageDividerR1" type="number" step="0.01" min="0"></div>
+          <div class="field"><label>Divider R2</label><input id="voltageDividerR2" type="number" step="0.01" min="0.0001"></div>
+          <div class="field"><label>Calibration (auto from R1/R2)</label><input id="voltmeterCalibration" type="number" step="0.0001" readonly></div>
+          <div class="field"><label>Offset</label><input id="voltmeterOffset" type="number" step="0.01"></div>
+          <div class="field"><label>Sliding Window Size</label><input id="slidingWindowSize" type="number" min="1"></div>
+          <div class="field"><label>Timer Period (us)</label><input id="timerPeriodUs" type="number" min="1000"></div>
+          <div class="field"><label>Battery Disconnect Threshold (V)</label><input id="batteryDisconnectThreshold" type="number" step="0.01"></div>
+          <div class="field"><label>Battery Low Threshold (V)</label><input id="batteryLowThreshold" type="number" step="0.01"></div>
+          <div class="hint">Formula: calibration = (R1 + R2) / R2</div>
+        </div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <div class="actions__buttons" role="toolbar" aria-label="Settings file actions">
+          <button type="button" class="btn actions__btn" id="loadBtn">
+            <span class="btn-action-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <path d="M14 2v6h6"></path>
+                <path d="M8 13h8"></path>
+                <path d="M8 17h6"></path>
+              </svg>
+            </span>
+            <span class="btn-action-text">LOAD SETTINGS</span>
+          </button>
+          <button type="button" class="btn actions__btn" id="saveBtn">
+            <span class="btn-action-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                <path d="M17 21V13H7v8"></path>
+                <path d="M7 3v5h8"></path>
+              </svg>
+            </span>
+            <span class="btn-action-text">SAVE SETTINGS</span>
+          </button>
+          <button type="button" class="btn actions__btn actions__btn--narrow" id="resetDefaultsBtn">
+            <span class="btn-action-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12a9 9 0 1 1-3-6.7"></path>
+                <path d="M21 3v6h-6"></path>
+              </svg>
+            </span>
+            <span class="btn-action-text">RESET DEFAULTS</span>
+          </button>
+          <button type="button" class="btn actions__btn actions__btn--narrow" id="exportBtn">
+            <span class="btn-action-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 3v12"></path>
+                <path d="M7 8l5-5 5 5"></path>
+                <path d="M5 21h14"></path>
+              </svg>
+            </span>
+            <span class="btn-action-text">EXPORT</span>
+          </button>
+          <button type="button" class="btn actions__btn actions__btn--narrow" id="importBtn">
+            <span class="btn-action-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 21V9"></path>
+                <path d="M7 16l5 5 5-5"></path>
+                <path d="M5 3h14"></path>
+              </svg>
+            </span>
+            <span class="btn-action-text">IMPORT</span>
+          </button>
+          <input id="importFile" type="file" accept=".json,application/json" style="display:none">
+          <button type="button" class="btn actions__btn actions__btn--narrow" id="espRebootBtn">
+            <span class="btn-action-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2v4"></path>
+                <path d="M12 18v4"></path>
+                <path d="M4.93 4.93l2.83 2.83"></path>
+                <path d="M16.24 16.24l2.83 2.83"></path>
+                <path d="M2 12h4"></path>
+                <path d="M18 12h4"></path>
+                <path d="M4.93 19.07l2.83-2.83"></path>
+                <path d="M16.24 7.76l2.83-2.83"></path>
+              </svg>
+            </span>
+            <span class="btn-action-text">ESP REBOOT</span>
+          </button>
+        </div>
+        <div id="saveStatus" class="actions__status" role="status" aria-live="polite"></div>
+      </div>
+    </div>
+
+    <div class="speed-dial" id="speedDial">
+      <div class="speed-dial__backdrop" id="speedDialBackdrop" aria-hidden="true"></div>
+      <div class="speed-dial__panel">
+        <div class="speed-dial__actions" id="speedDialActions" role="group" aria-label="Quick actions">
+          <button type="button" id="modeToggle" class="modern-floating-btn speed-dial__action" aria-label="Switch to light mode">
+            <div class="btn-icon">
+              <span class="theme-icon theme-icon-sun" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="4"></circle>
+                  <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path>
+                </svg>
+              </span>
+              <span class="theme-icon theme-icon-moon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 12.79A9 9 0 1 1 11.21 3c0.25 0 0.5 0.01 0.74 0.03A7 7 0 0 0 21 12.79z"></path>
+                </svg>
+              </span>
+            </div>
+          </button>
+          <button type="button" class="modern-floating-btn speed-dial__action" id="backBtn" aria-label="Back to dashboard">
+            <div class="btn-icon">
+              <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M19 12H5M12 19l-7-7 7-7"></path>
+              </svg>
+            </div>
+          </button>
+        </div>
+        <button type="button" class="modern-floating-btn speed-dial__main" id="speedDialToggle" aria-expanded="false" aria-haspopup="true" aria-controls="speedDialActions" aria-label="Open menu">
+          <span class="speed-dial__main-icon speed-dial__main-icon--plus" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="26" height="26" stroke="currentColor" stroke-width="2.25" fill="none" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 5v14M5 12h14"></path>
+            </svg>
+          </span>
+          <span class="speed-dial__main-icon speed-dial__main-icon--close" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2.25" fill="none" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 6L6 18M6 6l12 12"></path>
+            </svg>
+          </span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Sets flag before external JS so Go Live / ?nopin=1 works even if settings.js is cached -->
+    <script>
+(function () {
+  try {
+    var q = new URLSearchParams(window.location.search);
+    if (q.has('previewpin')) {
+      window.__ESP_SETTINGS_SKIP_PIN_GATE__ = false;
+      window.__ESP_SETTINGS_PREVIEW_PIN_GATE__ = true;
+      var g0 = document.getElementById('settingsPinGate');
+      var m0 = document.getElementById('settingsMain');
+      var note0 = document.getElementById('settingsGatePreviewNote');
+      if (g0) {
+        g0.removeAttribute('hidden');
+      }
+      if (m0) {
+        m0.setAttribute('hidden', '');
+      }
+      if (note0) {
+        note0.hidden = false;
+      }
+      return;
+    }
+    window.__ESP_SETTINGS_PREVIEW_PIN_GATE__ = false;
+    var h = window.location.hostname;
+    var po = String(window.location.port || '');
+    var ports = { 5500: 1, 5501: 1, 5502: 1, 5503: 1, 8080: 1, 8888: 1, 3000: 1, 4200: 1, 5173: 1, 4173: 1 };
+    window.__ESP_SETTINGS_SKIP_PIN_GATE__ =
+      q.has('nopin') ||
+      window.location.protocol === 'file:' ||
+      h === '127.0.0.1' ||
+      h === 'localhost' ||
+      h === '[::1]' ||
+      h === '::1' ||
+      h === '' ||
+      ports[po] === 1;
+    if (window.__ESP_SETTINGS_SKIP_PIN_GATE__) {
+      var g = document.getElementById('settingsPinGate');
+      var m = document.getElementById('settingsMain');
+      if (g) {
+        g.hidden = true;
+      }
+      if (m) {
+        m.hidden = false;
+      }
+    }
+  } catch (e) {
+    window.__ESP_SETTINGS_SKIP_PIN_GATE__ = false;
+  }
+})();
+    </script>
+    <script src="settings.js?v=7"></script>
+    <script>
+(function () {
+  function applySkipPinUi() {
+    if (window.__ESP_SETTINGS_PREVIEW_PIN_GATE__) {
+      return;
+    }
+    if (window.__ESP_SETTINGS_SKIP_PIN_GATE__ !== true) {
+      return;
+    }
+    var g = document.getElementById('settingsPinGate');
+    var m = document.getElementById('settingsMain');
+    if (g) {
+      g.hidden = true;
+    }
+    if (m) {
+      m.hidden = false;
+    }
+  }
+  document.addEventListener('DOMContentLoaded', function () {
+    [0, 80, 250, 800].forEach(function (ms) {
+      setTimeout(applySkipPinUi, ms);
+    });
+  });
+})();
+    </script>
+  </body>
+</html>

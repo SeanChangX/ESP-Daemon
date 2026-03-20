@@ -2,60 +2,167 @@
 <html class="dark-mode">
   <head>
     <meta charset="UTF-8">
-    <title>DIT Robotics</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ESP-Daemon</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <link rel="icon" type="image/png" href="favicon.png">
     <link rel="stylesheet" type="text/css" href="style.css">
-    <script src="highcharts.js"></script>
   </head>
   <body>
     <div class="topnav">
       <h1>ROBOT STATUS PANEL</h1>
-      <button id="modeToggle" class="mode-toggle">LIGHT MODE</button>
-    </div>
-    <div class="content">
-      <div class="card-grid">
-        <div class="card">
-          <p class="card-title">Battery Status</p>
-          <div id="chart-sensor" class="chart-container"></div>
-        </div>
+      <div class="topnav-meta" aria-label="Device">
+        <div class="topnav-meta__chip"><span class="topnav-meta__label">MAC:</span><span id="deviceMac" class="topnav-meta__value">00-00-00-00-00-00</span></div>
+        <div class="topnav-meta__chip"><span class="topnav-meta__label">VER:</span><span id="deviceVersion" class="topnav-meta__value">0.0.0</span></div>
       </div>
-      
-      <div class="status-container">
-        <p class="status-title">System Status</p>
-        <div class="status-items-container">
-          <div id="batteryStatus" class="status-item">Battery: unknown</div>
-          <div id="microROS" class="status-item">micro-ROS: unknown</div>
-        </div>
-        
-        <div class="emergency-controls">
-          <p class="emergency-title">Emergency Controls</p>
-          <div class="emergency-buttons">
-            <button id="emergencyEnable" class="emergency-btn enable-btn">ENABLE</button>
-            <button id="emergencyDisable" class="emergency-btn disable-btn">DISABLE</button>
+    </div>
+    <div class="content page-shell">
+      <div class="dashboard-wrap">
+        <div class="dashboard-grid">
+        <div class="dashboard-col">
+        <section class="card dashboard-panel card--battery" aria-labelledby="panel-battery-title">
+          <p class="card-title" id="panel-battery-title">Battery Status</p>
+          <div class="battery-telemetry" aria-label="Battery discharge session voltage history">
+            <div class="telemetry-toolbar">
+              <div class="telemetry-toolbar__meta">
+                <div class="telemetry-toprow">
+                  <span class="telemetry-live" id="liveVoltageValue">-- V</span>
+                  <div class="telemetry-battery-summary" aria-label="Battery percent and remaining time">
+                    <span class="battery-icon" aria-hidden="true">
+                      <span class="battery-icon__fill" id="batteryIconFill"></span>
+                    </span>
+                    <span class="telemetry-estimate" id="batteryEstimateLine">--% · -- left</span>
+                  </div>
+                </div>
+                <span class="telemetry-log-meta" id="batteryUptimeLine">Battery uptime 00:00:00</span>
+              </div>
+              <div class="telemetry-toolbar__actions">
+                <button type="button" class="telemetry-btn" id="telemetryDownloadJson" title="Download JSON">JSON</button>
+                <button type="button" class="telemetry-btn" id="telemetryDownloadCsv" title="Download CSV">CSV</button>
+              </div>
+            </div>
+            <div id="chart-sensor" class="telemetry-chart-shell">
+              <canvas id="techBatteryCanvas" aria-label="Battery voltage over the current discharge session"></canvas>
+            </div>
           </div>
+        </section>
+
+        <section class="card dashboard-panel" aria-labelledby="panel-system-title">
+          <p class="card-title" id="panel-system-title">System Status</p>
+          <div class="status-items-container">
+            <div class="status-item status-item--split">
+              <span class="status-item__label">Battery</span>
+              <span class="status-pill" id="batteryStatusValue">unknown</span>
+            </div>
+            <div class="status-item status-item--split">
+              <span class="status-item__label">micro-ROS</span>
+              <span class="status-pill" id="microRosValue">unknown</span>
+            </div>
+          </div>
+        </section>
+        </div>
+
+        <div class="dashboard-col">
+        <section class="card dashboard-panel" aria-labelledby="panel-emergency-title">
+          <p class="card-title" id="panel-emergency-title">Emergency Controls</p>
+          <div class="emergency-mega">
+            <button type="button" class="emergency-mega__btn" id="emergencyStopAllBtn" aria-describedby="emergencyStopHint">
+              STOP ALL POWER
+            </button>
+            <p class="emergency-mega__hint" id="emergencyStopHint" hidden>All rails off. Reload the page to use individual switches again.</p>
+          </div>
+          <div class="power-switch-list">
+            <div class="power-switch-row">
+              <span class="power-switch-label" id="chassisPowerLabel">Chassis Power</span>
+              <label class="switch-control">
+                <input type="checkbox" id="chassisPowerSwitch">
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <div class="power-switch-row">
+              <span class="power-switch-label" id="missionPowerLabel">Actuators Power</span>
+              <label class="switch-control">
+                <input type="checkbox" id="missionPowerSwitch">
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <div class="power-switch-row">
+              <span class="power-switch-label" id="negativePressurePowerLabel">Others</span>
+              <label class="switch-control">
+                <input type="checkbox" id="negativePressurePowerSwitch">
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+          </div>
+        </section>
+        </div>
         </div>
       </div>
     </div>
-    <div class="floating-buttons">
-      <div class="modern-floating-btn" id="actionButton">
-        <div class="btn-icon">
-          <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M13 12H3"></path>
-          </svg>
+    <div class="speed-dial" id="speedDial">
+      <div class="speed-dial__backdrop" id="speedDialBackdrop" aria-hidden="true"></div>
+      <div class="speed-dial__panel">
+        <div class="speed-dial__actions" id="speedDialActions" role="group" aria-label="Quick actions">
+        <button type="button" class="modern-floating-btn speed-dial__action" id="actionButton" aria-label="Control panel">
+          <div class="btn-icon">
+            <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M13 12H3"></path>
+            </svg>
+          </div>
+          <div class="btn-loading">
+            <svg viewBox="0 0 24 24" width="24" height="24">
+              <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="4" stroke-dasharray="31.4 31.4">
+                <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite"/>
+              </circle>
+            </svg>
+          </div>
+        </button>
+        <button type="button" class="modern-floating-btn speed-dial__action" id="modeToggle" aria-label="Switch to light mode">
+          <div class="btn-icon">
+            <span class="theme-icon theme-icon-sun" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="4"></circle>
+                <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path>
+              </svg>
+            </span>
+            <span class="theme-icon theme-icon-moon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3c0.25 0 0.5 0.01 0.74 0.03A7 7 0 0 0 21 12.79z"></path>
+              </svg>
+            </span>
+          </div>
+        </button>
+        <button type="button" class="modern-floating-btn speed-dial__action" id="settingsEntry" aria-label="Settings">
+          <div class="btn-icon">
+            <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="4" y1="21" x2="4" y2="14"></line>
+              <line x1="4" y1="10" x2="4" y2="3"></line>
+              <line x1="12" y1="21" x2="12" y2="12"></line>
+              <line x1="12" y1="8" x2="12" y2="3"></line>
+              <line x1="20" y1="21" x2="20" y2="16"></line>
+              <line x1="20" y1="12" x2="20" y2="3"></line>
+              <line x1="1" y1="14" x2="7" y2="14"></line>
+              <line x1="9" y1="8" x2="15" y2="8"></line>
+              <line x1="17" y1="16" x2="23" y2="16"></line>
+            </svg>
+          </div>
+        </button>
         </div>
-        <div class="btn-loading">
-          <svg viewBox="0 0 24 24" width="24" height="24">
-            <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="4" stroke-dasharray="31.4 31.4">
-              <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite"/>
-            </circle>
-          </svg>
-        </div>
-        <span class="btn-tooltip">Control Panel</span>
+        <button type="button" class="modern-floating-btn speed-dial__main" id="speedDialToggle" aria-expanded="false" aria-haspopup="true" aria-controls="speedDialActions" aria-label="Open menu">
+          <span class="speed-dial__main-icon speed-dial__main-icon--plus" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="26" height="26" stroke="currentColor" stroke-width="2.25" fill="none" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 5v14M5 12h14"></path>
+            </svg>
+          </span>
+          <span class="speed-dial__main-icon speed-dial__main-icon--close" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2.25" fill="none" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 6L6 18M6 6l12 12"></path>
+            </svg>
+          </span>
+        </button>
       </div>
     </div>
     <div class="footer">
-      © 2025 Developed by <a href="https://github.com/SeanChangX" target="_blank">SeanChangX</a>
+      © 2026 Developed by <a href="https://github.com/SeanChangX" target="_blank">SeanChangX</a>
     </div>
     <script src="script.js"></script>
   </body>

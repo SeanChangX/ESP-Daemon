@@ -1,7 +1,7 @@
 #ifndef LED_CONTROL_H
 #define LED_CONTROL_H
 
-#include <Adafruit_NeoPixel.h>
+#include <Arduino.h>
 
 enum led_mode {
   DEFAULT_MODE,
@@ -12,11 +12,10 @@ enum led_mode {
   SIMA_CMD
 };
 
-extern Adafruit_NeoPixel strip;
 extern volatile int mode;
 extern volatile int sensor_mode;
 extern unsigned long last_override_time;
-extern const unsigned long override_duration;
+extern unsigned long override_duration;
 
 void initLED();
 void colorWipe(uint32_t color, int wait);

@@ -1,64 +1,161 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-// WiFi and mDNS
-#define HOSTNAME    "DIT-2025-00-ESP"
-#define MDNS_NAME   "dit-2025-00-esp"
+// ============================================================================
+// Build Profile
+// ============================================================================
+// PROFILE_DEV: development profile with more debugging visibility.
+// PROFILE_PROD: production profile with reduced debug noise.
+#define PROFILE_DEV   1
+#define PROFILE_PROD  2
 
-// ESP-NOW for SIMA communication
-//  [94:a9:90:07:00:78]---[01]
-//  [94:a9:90:06:E6:00]---[02]
-//  [94:a9:90:0b:86:d8]---[03]
-//  [94:a9:90:05:57:d8]---[04]
-//  [94:a9:90:0b:64:f0]---[05]
-//  [94:a9:90:06:e6:b4]---[06]
-//  [94:a9:90:05:4d:48]---[07]
-//  [94:a9:90:05:57:f4]---[08]
+#ifndef BUILD_PROFILE
+#define BUILD_PROFILE PROFILE_DEV
+#endif
 
-// [ DIT-2025-11 ]
-// #define SIMA_01 { 0x94, 0xa9, 0x90, 0x07, 0x00, 0x78 }
-// #define SIMA_02 { 0x94, 0xa9, 0x90, 0x06, 0xe6, 0x00 }
-// #define SIMA_03 { 0x94, 0xa9, 0x90, 0x0b, 0x86, 0xd8 }
-// #define SIMA_04 { 0x94, 0xa9, 0x90, 0x05, 0x57, 0xd8 }
+#if BUILD_PROFILE == PROFILE_DEV
+#define ENABLE_VERBOSE_LOG 1
+#elif BUILD_PROFILE == PROFILE_PROD
+#define ENABLE_VERBOSE_LOG 0
+#else
+#error "BUILD_PROFILE must be PROFILE_DEV or PROFILE_PROD"
+#endif
 
-// [ DIT-2025-14 ]
-#define SIMA_01 { 0x94, 0xa9, 0x90, 0x0b, 0x64, 0xf0 }
-#define SIMA_02 { 0x94, 0xa9, 0x90, 0x06, 0xe6, 0xb4 }
-#define SIMA_03 { 0x94, 0xa9, 0x90, 0x05, 0x4d, 0x48 }
-#define SIMA_04 { 0x94, 0xa9, 0x90, 0x05, 0x57, 0xf4 }
+// ============================================================================
+// Compile-Time Feature Switches (0/1)
+// ============================================================================
+// This layer controls compile-time inclusion.
+// If set to 0, that module is excluded from the firmware image.
+// Runtime toggles in the web settings only work for modules compiled in.
+#ifndef ENABLE_WIFI
+#define ENABLE_WIFI                  1
+#endif
+#ifndef ENABLE_WEB_SERVER
+#define ENABLE_WEB_SERVER            1
+#endif
+#ifndef ENABLE_ESPNOW
+#define ENABLE_ESPNOW                1
+#endif
+#ifndef ENABLE_MICROROS
+#define ENABLE_MICROROS              1
+#endif
+#ifndef ENABLE_LED_TASK
+#define ENABLE_LED_TASK              1
+#endif
+#ifndef ENABLE_SENSOR_TASK
+#define ENABLE_SENSOR_TASK           1
+#endif
+#ifndef ENABLE_SYSTEM_SERVICE_TASK
+#define ENABLE_SYSTEM_SERVICE_TASK   1
+#endif
+#ifndef ENABLE_POWER_CONTROL_POLL
+#define ENABLE_POWER_CONTROL_POLL    1
+#endif
 
-// micro-ROS
-#define ROS_NODE_NAME       "esp_daemon"
-#define ROS_DOMAIN_ID       0
-#define ROS_TIMER_MS        100
-#define MROS_TIMEOUT_MS     100
-#define MROS_PING_INTERVAL  1000
+// Dependency guards to prevent invalid feature combinations.
+#if ENABLE_WEB_SERVER && !ENABLE_WIFI
+#error "ENABLE_WEB_SERVER requires ENABLE_WIFI=1"
+#endif
+#if ENABLE_ESPNOW && !ENABLE_WIFI
+#error "ENABLE_ESPNOW requires ENABLE_WIFI=1 in current implementation"
+#endif
 
-// Emergency Button
-#define RELAY_PIN           D2
-#define RELAY_ACTIVE_STATE  LOW
-#define RELAY_INITIAL_STATE LOW
-#define ENABLE              RELAY_ACTIVE_STATE
-#define DISABLE           (!RELAY_ACTIVE_STATE)
+// ============================================================================
+// Runtime Logging
+// ============================================================================
+// micro-ROS serial transport shares the same Serial link as debug print output.
+// Keep serial logs OFF by default when micro-ROS is enabled to avoid XRCE frame
+// corruption and random reconnect/disconnect behavior.
+#ifndef ENABLE_SERIAL_LOG
+#if ENABLE_MICROROS
+#define ENABLE_SERIAL_LOG 0
+#else
+#define ENABLE_SERIAL_LOG 1
+#endif
+#endif
 
-// RGB LED strip 
-#define LED_PIN             D1
-#define LED_COUNT           40
-#define LED_BRIGHTNESS      200
-#define LED_OVR_DURATION    1000
+#if ENABLE_SERIAL_LOG
+#define DAEMON_LOGF(...)  do { Serial.printf(__VA_ARGS__); } while (0)
+#define DAEMON_LOGLN(...) do { Serial.println(__VA_ARGS__); } while (0)
+#else
+#define DAEMON_LOGF(...)  do {} while (0)
+#define DAEMON_LOGLN(...) do {} while (0)
+#endif
 
-// Voltmeter - Battery voltage measurement
-// | Formula:
-// |    Vbattf = (VOLTMETER_CALIBRATION * Vbatt / SLIDING_WINDOW_SIZE / 1000.0) + VOLTMETER_OFFSET;
-// |    [ R1 = 1.5M ohm, R2 = 220k ohm ] VC = 7.81 OFFSET = 0.65
-// |    [ R1 = 1.5M ohm, R2 = 200k ohm ] VC = 8.50 OFFSET = 0.65
-// | Note:
-// |    (A0 == D0) on Xiao ESP32C3
-#define VOLTMETER_PIN           A0
-#define VOLTMETER_CALIBRATION   8.5
-#define VOLTMETER_OFFSET        0.1
-#define SLIDING_WINDOW_SIZE     64
-#define TIMER_PERIOD_US         1000000
-// constexpr uint32_t TIMER_PERIOD_US = 1000000;
+// ============================================================================
+// RTOS Task Configuration
+// ============================================================================
+// ESP32-C3 is single-core, so tasks must run on core 0.
+#ifndef TASK_CORE_ID
+#define TASK_CORE_ID 0
+#endif
+
+// FreeRTOS priority: higher value means higher priority.
+// Priority 1 is usually sufficient for stability-first behavior.
+#ifndef TASK_PRIO_LED
+#define TASK_PRIO_LED 1
+#endif
+#ifndef TASK_PRIO_SENSOR
+#define TASK_PRIO_SENSOR 1
+#endif
+#ifndef TASK_PRIO_MICROROS
+#define TASK_PRIO_MICROROS 1
+#endif
+#ifndef TASK_PRIO_SERVICE
+#define TASK_PRIO_SERVICE 1
+#endif
+
+// Stack unit is bytes in ESP-IDF's xTaskCreatePinnedToCore() API.
+// Example: 10000 bytes is approximately 9.8 KB.
+#ifndef TASK_STACK_LED_BYTES
+#define TASK_STACK_LED_BYTES 4096
+#endif
+#ifndef TASK_STACK_SENSOR_BYTES
+#define TASK_STACK_SENSOR_BYTES 4096
+#endif
+#ifndef TASK_STACK_MICROROS_BYTES
+#define TASK_STACK_MICROROS_BYTES 10000
+#endif
+#ifndef TASK_STACK_SERVICE_BYTES
+#define TASK_STACK_SERVICE_BYTES 4096
+#endif
+
+// Service task polling interval in milliseconds.
+#ifndef TASK_SERVICE_INTERVAL_MS
+#define TASK_SERVICE_INTERVAL_MS 50
+#endif
+
+// Require several consecutive ping failures before declaring micro-ROS lost.
+#ifndef MROS_DISCONNECT_PING_FAILS
+#define MROS_DISCONNECT_PING_FAILS 3
+#endif
+
+// Basic compile-time safety guards to avoid unstable runtime settings.
+#if TASK_STACK_LED_BYTES < 1024
+#error "TASK_STACK_LED_BYTES too small (<1024)"
+#endif
+#if TASK_STACK_SENSOR_BYTES < 1024
+#error "TASK_STACK_SENSOR_BYTES too small (<1024)"
+#endif
+#if TASK_STACK_MICROROS_BYTES < 2048
+#error "TASK_STACK_MICROROS_BYTES too small (<2048)"
+#endif
+#if TASK_STACK_SERVICE_BYTES < 1024
+#error "TASK_STACK_SERVICE_BYTES too small (<1024)"
+#endif
+#if TASK_SERVICE_INTERVAL_MS < 5
+#error "TASK_SERVICE_INTERVAL_MS too small (<5ms)"
+#endif
+#if MROS_DISCONNECT_PING_FAILS < 1
+#error "MROS_DISCONNECT_PING_FAILS must be >= 1"
+#endif
+
+// Runtime settings (GPIO/LED/ROS/hostname/voltmeter/ESP-NOW whitelist/PIN, etc.)
+// are managed by Web Settings and persisted to /settings.json.
+
+// Firmware version
+#ifndef ESP_DAEMON_FW_VERSION
+#define ESP_DAEMON_FW_VERSION "2.0.0"
+#endif
 
 #endif

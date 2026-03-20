@@ -138,10 +138,11 @@ void systemServiceTask(void* pvParameters) {
 void setup() {
   Serial.begin(115200);
 
-  if (!SPIFFS.begin(true)) {
+  const bool spiffsMounted = SPIFFS.begin(false);
+  if (!spiffsMounted) {
     DAEMON_LOGLN("SPIFFS Mount Failed");
   }
-  initAppSettings();
+  initAppSettings(spiffsMounted);
 
   batteryEstimateInit();
 

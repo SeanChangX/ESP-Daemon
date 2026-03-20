@@ -63,7 +63,7 @@ struct AppSettings {
   String control_panel_url;
 };
 
-void initAppSettings();
+void initAppSettings(bool storage_available = true);
 const AppSettings& getAppSettings();
 
 void appSettingsToJson(JsonDocument& doc, bool include_pin_code = false);

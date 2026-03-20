@@ -466,25 +466,35 @@ bool resetAppSettingsToDefaults() {
   return saveAppSettings();
 }
 
-void initAppSettings() {
+void initAppSettings(bool storage_available) {
   applyDefaults();
 
+  if (!storage_available) {
+    DAEMON_LOGLN("Settings storage unavailable, using in-memory defaults");
+    return;
+  }
+
   if (!SPIFFS.exists(kSettingsPath)) {
-    saveAppSettings();
+    DAEMON_LOGF("Settings file missing: %s (using in-memory defaults)\n", kSettingsPath);
     return;
   }
 
   File file = SPIFFS.open(kSettingsPath, FILE_READ);
   if (!file) {
-    saveAppSettings();
+    DAEMON_LOGF("Failed to open settings file: %s (using in-memory defaults)\n", kSettingsPath);
     return;
   }
 
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, file);
   file.close();
-  if (err || !doc.is<JsonObject>()) {
-    saveAppSettings();
+  if (err) {
+    DAEMON_LOGF("Failed to parse settings file: %s (%s)\n", kSettingsPath, err.c_str());
+    return;
+  }
+
+  if (!doc.is<JsonObject>()) {
+    DAEMON_LOGF("Invalid settings root in %s (using in-memory defaults)\n", kSettingsPath);
     return;
   }
 
@@ -492,7 +502,6 @@ void initAppSettings() {
   if (!validateControlPanelUrl(g_settings.control_panel_url)) {
     g_settings.control_panel_url = kDefaultControlPanelUrl;
   }
-  saveAppSettings();
 }
 
 bool updateAppSettingsFromJson(const JsonObjectConst& json, String& error) {

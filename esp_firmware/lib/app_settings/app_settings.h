@@ -53,6 +53,9 @@ struct AppSettings {
   String estop_target_mac;
   uint8_t estop_switch_pin;
   bool estop_switch_active_high;
+  bool estop_wled_enabled;
+  String estop_wled_base_url;
+  uint16_t estop_wled_preset;
 
   std::vector<std::array<uint8_t, 6>> emergency_switch_macs;
 

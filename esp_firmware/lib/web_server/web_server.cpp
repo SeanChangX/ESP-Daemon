@@ -120,6 +120,8 @@ static void handleEStopStatusGet() {
   doc["effectiveTargetMac"]   = getEStopTargetMac();
   doc["espNowChannel"]        = wifi_channel;
   doc["packetsSent"]          = getEStopPacketCount();
+  doc["wledStatus"]           = getEStopWledStatus();
+  doc["wledSnapshotReady"]    = isEStopWledSnapshotReady();
 
   String output;
   serializeJson(doc, output);

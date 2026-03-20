@@ -1147,6 +1147,16 @@ textarea:focus-visible {
   margin-top: 0.95rem;
 }
 
+/* E-stop page uses a tighter spacing rhythm around toggle rows. */
+.settings-toggle-stack--compact {
+  margin: 0 0 0.65rem;
+  gap: 0.62rem;
+}
+
+.settings-card .field + .settings-toggle-stack--compact {
+  margin-top: 0;
+}
+
 /* Full-screen PIN gate before settings content */
 .settings-pin-gate {
   position: fixed;

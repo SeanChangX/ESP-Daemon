@@ -125,6 +125,48 @@ function setPillState(el, text, okState) {
   }
 }
 
+function normalizeUrlNoTrailingSlash(raw) {
+  const value = String(raw || '').trim();
+  if (!value) {
+    return '';
+  }
+  return value.replace(/\/+$/, '');
+}
+
+function mapWledStatusText(statusRaw, snapshotReady) {
+  const status = String(statusRaw || '').trim().toLowerCase();
+  const hasSnapshot = !!snapshotReady;
+  switch (status) {
+    case 'ready':
+      return hasSnapshot ? 'ready (snapshot)' : 'ready';
+    case 'disabled':
+      return 'disabled';
+    case 'wifi_disconnected':
+      return 'wifi disconnected';
+    case 'url_empty':
+    case 'restore_url_empty':
+      return 'url empty';
+    case 'snapshot_get_failed':
+      return 'snapshot failed';
+    case 'snapshot_invalid':
+      return 'snapshot invalid';
+    case 'estop_preset_applied':
+      return 'estop preset active';
+    case 'preset_apply_failed':
+      return 'preset apply failed';
+    case 'restore_wait_wifi':
+      return 'restore waiting wifi';
+    case 'restore_failed_retrying':
+      return 'restore retrying';
+    case 'restored':
+      return 'restored';
+    case 'no_snapshot':
+      return 'no snapshot';
+    default:
+      return status || '-';
+  }
+}
+
 function parseJsonSafe(res) {
   return res.text().then(function(t) {
     if (!t) {
@@ -185,6 +227,9 @@ function loadSettings() {
       const targetInput = document.getElementById('estopTargetMac');
       const pinInput = document.getElementById('estopSwitchPin');
       const activeHighInput = document.getElementById('estopSwitchActiveHigh');
+      const wledEnabledInput = document.getElementById('estopWledEnabled');
+      const wledBaseUrlInput = document.getElementById('estopWledBaseUrl');
+      const wledPresetInput = document.getElementById('estopWledPreset');
 
       if (targetInput) {
         const normalized = normalizeMacColonFromAny(result.data.estopTargetMac || '');
@@ -195,6 +240,15 @@ function loadSettings() {
       }
       if (activeHighInput) {
         activeHighInput.checked = !!result.data.estopSwitchActiveHigh;
+      }
+      if (wledEnabledInput) {
+        wledEnabledInput.checked = !!result.data.estopWledEnabled;
+      }
+      if (wledBaseUrlInput) {
+        wledBaseUrlInput.value = normalizeUrlNoTrailingSlash(result.data.estopWledBaseUrl || '');
+      }
+      if (wledPresetInput) {
+        wledPresetInput.value = result.data.estopWledPreset != null ? String(result.data.estopWledPreset) : '1';
       }
     });
 }
@@ -213,6 +267,7 @@ function refreshEStopStatus() {
       const channelEl = document.getElementById('espNowChannelRuntime');
       const peerStatusEl = document.getElementById('peerStatus');
       const packetEl = document.getElementById('packetCount');
+      const wledEl = document.getElementById('wledStatus');
 
       const pressed = !!data.pressed;
       setPillState(switchState, pressed ? 'PRESSED (STOP)' : 'RELEASED', !pressed);
@@ -238,10 +293,16 @@ function refreshEStopStatus() {
       } else {
         setPillState(peerStatusEl, 'not configured', false);
       }
+
+      const snapshotReady = !!data.wledSnapshotReady;
+      const wledText = mapWledStatusText(data.wledStatus, snapshotReady);
+      const wledOk = wledText === 'ready' || wledText === 'ready (snapshot)' || wledText === 'restored';
+      setPillState(wledEl, wledText, wledOk);
     })
     .catch(function() {
       setPillState(document.getElementById('switchState'), 'offline', false);
       setPillState(document.getElementById('peerStatus'), 'offline', false);
+      setPillState(document.getElementById('wledStatus'), 'offline', false);
     });
 }
 
@@ -249,6 +310,9 @@ function collectSavePayload() {
   const macInput = document.getElementById('estopTargetMac');
   const pinInput = document.getElementById('estopSwitchPin');
   const activeHighInput = document.getElementById('estopSwitchActiveHigh');
+  const wledEnabledInput = document.getElementById('estopWledEnabled');
+  const wledBaseUrlInput = document.getElementById('estopWledBaseUrl');
+  const wledPresetInput = document.getElementById('estopWledPreset');
 
   const macRaw = macInput ? macInput.value : '';
   const macTrimmed = String(macRaw || '').trim();
@@ -263,11 +327,30 @@ function collectSavePayload() {
     throw new Error('E-Stop GPIO must be between 0 and 48.');
   }
 
+  const wledEnabled = !!(wledEnabledInput && wledEnabledInput.checked);
+  const wledBaseUrl = normalizeUrlNoTrailingSlash(wledBaseUrlInput ? wledBaseUrlInput.value : '');
+  if (wledEnabled) {
+    if (!wledBaseUrl) {
+      throw new Error('WLED Base URL is required when WLED Sync is enabled.');
+    }
+    if (!/^https?:\/\//i.test(wledBaseUrl)) {
+      throw new Error('WLED Base URL must start with http:// or https://');
+    }
+  }
+
+  const wledPresetValue = wledPresetInput ? Number(wledPresetInput.value) : NaN;
+  if (!Number.isFinite(wledPresetValue) || wledPresetValue < 1 || wledPresetValue > 250) {
+    throw new Error('WLED preset must be between 1 and 250.');
+  }
+
   return {
     authPin: '',
     estopTargetMac: normalizedMac,
     estopSwitchPin: Math.round(pinValue),
-    estopSwitchActiveHigh: !!(activeHighInput && activeHighInput.checked)
+    estopSwitchActiveHigh: !!(activeHighInput && activeHighInput.checked),
+    estopWledEnabled: wledEnabled,
+    estopWledBaseUrl: wledBaseUrl,
+    estopWledPreset: Math.round(wledPresetValue)
   };
 }
 

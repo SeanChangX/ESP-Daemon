@@ -30,6 +30,9 @@ constexpr uint32_t kTimerPeriodUsMaxUi    = 3600000000UL;
 constexpr uint32_t kLedOverrideMsMaxUi    = 604800000UL;
 constexpr float kBatteryVoltageAbsMaxUi   = 60.0f;
 constexpr float kVoltmeterOffsetAbsMaxUi  = 25.0f;
+constexpr uint16_t kWledPresetMin         = 1;
+constexpr uint16_t kWledPresetMax         = 250;
+constexpr size_t kWledUrlMaxLen           = 192;
 
 /** Default status-page Control Panel shortcut when unset or empty in JSON. */
 constexpr const char* kDefaultControlPanelUrl = "https://scx.tw/links";
@@ -135,6 +138,9 @@ void applyDefaults() {
   g_settings.estop_target_mac = "";
   g_settings.estop_switch_pin = 8;
   g_settings.estop_switch_active_high = false;
+  g_settings.estop_wled_enabled = false;
+  g_settings.estop_wled_base_url = "";
+  g_settings.estop_wled_preset = 1;
 
   g_settings.emergency_switch_macs.clear();
 
@@ -291,6 +297,9 @@ void loadFromJson(const JsonObjectConst& json) {
   loadString(json, "estopTargetMac",                g_settings.estop_target_mac);
   loadUInt8(json,  "estopSwitchPin",                g_settings.estop_switch_pin);
   loadBool(json,   "estopSwitchActiveHigh",         g_settings.estop_switch_active_high);
+  loadBool(json,   "estopWledEnabled",              g_settings.estop_wled_enabled);
+  loadString(json, "estopWledBaseUrl",              g_settings.estop_wled_base_url);
+  loadUInt16(json, "estopWledPreset",               g_settings.estop_wled_preset);
   g_settings.estop_target_mac.replace("-", ":");
   g_settings.estop_target_mac.trim();
   g_settings.estop_target_mac.toLowerCase();
@@ -301,6 +310,10 @@ void loadFromJson(const JsonObjectConst& json) {
     } else {
       g_settings.estop_target_mac = "";
     }
+  }
+  g_settings.estop_wled_base_url.trim();
+  if (g_settings.estop_wled_base_url.endsWith("/")) {
+    g_settings.estop_wled_base_url.remove(g_settings.estop_wled_base_url.length() - 1);
   }
 
   {
@@ -418,6 +431,9 @@ void appSettingsToJson(JsonDocument& doc, bool include_pin_code) {
   doc["estopTargetMac"]             = g_settings.estop_target_mac;
   doc["estopSwitchPin"]             = g_settings.estop_switch_pin;
   doc["estopSwitchActiveHigh"]      = g_settings.estop_switch_active_high;
+  doc["estopWledEnabled"]           = g_settings.estop_wled_enabled;
+  doc["estopWledBaseUrl"]           = g_settings.estop_wled_base_url;
+  doc["estopWledPreset"]            = g_settings.estop_wled_preset;
 
   doc["controlPanelUrl"] = g_settings.control_panel_url;
 
@@ -556,6 +572,36 @@ bool updateAppSettingsFromJson(const JsonObjectConst& json, String& error) {
       return false;
     }
     g_settings.estop_target_mac = toMacString(parsedMac);
+  }
+
+  if (g_settings.estop_wled_base_url.endsWith("/")) {
+    g_settings.estop_wled_base_url.remove(g_settings.estop_wled_base_url.length() - 1);
+  }
+
+  if (g_settings.estop_wled_base_url.length() > kWledUrlMaxLen) {
+    g_settings = backup;
+    error = "estopWledBaseUrl must be <= 192 chars";
+    return false;
+  }
+
+  if (g_settings.estop_wled_enabled) {
+    if (g_settings.estop_wled_base_url.length() == 0) {
+      g_settings = backup;
+      error = "estopWledBaseUrl is required when estopWledEnabled=true";
+      return false;
+    }
+    if (!(g_settings.estop_wled_base_url.startsWith("http://") ||
+          g_settings.estop_wled_base_url.startsWith("https://"))) {
+      g_settings = backup;
+      error = "estopWledBaseUrl must start with http:// or https://";
+      return false;
+    }
+  }
+
+  if (g_settings.estop_wled_preset < kWledPresetMin || g_settings.estop_wled_preset > kWledPresetMax) {
+    g_settings = backup;
+    error = "estopWledPreset must be in range 1..250";
+    return false;
   }
 #else
   if (g_settings.battery_low_threshold < g_settings.battery_disconnect_threshold) {

@@ -45,6 +45,10 @@
                 <span class="status-pill" id="peerStatus">not configured</span>
               </div>
               <div class="status-item status-item--split">
+                <span class="status-item__label">WLED</span>
+                <span class="status-pill" id="wledStatus">disabled</span>
+              </div>
+              <div class="status-item status-item--split">
                 <span class="status-item__label">Packets Sent</span>
                 <span class="status-pill" id="packetCount">0</span>
               </div>
@@ -61,7 +65,7 @@
               <label for="estopSwitchPin">E-Stop GPIO</label>
               <input id="estopSwitchPin" type="number" min="0" max="48">
             </div>
-            <div class="settings-toggle-stack">
+            <div class="settings-toggle-stack settings-toggle-stack--compact">
               <div class="settings-switch-row">
                 <label class="settings-switch-label" for="estopSwitchActiveHigh">Switch active when HIGH</label>
                 <label class="switch-control">
@@ -69,8 +73,23 @@
                   <span class="switch-slider"></span>
                 </label>
               </div>
+              <div class="settings-switch-row">
+                <label class="settings-switch-label" for="estopWledEnabled">WLED Sync Enabled</label>
+                <label class="switch-control">
+                  <input id="estopWledEnabled" type="checkbox">
+                  <span class="switch-slider"></span>
+                </label>
+              </div>
             </div>
-            <div class="hint">Default is active-low with internal pull-up. Pressed state will repeatedly broadcast STOP over ESP-NOW.</div>
+            <div class="field">
+              <label for="estopWledBaseUrl">WLED Base URL</label>
+              <input id="estopWledBaseUrl" type="text" autocomplete="off" placeholder="http://wled.local" maxlength="192" spellcheck="false">
+            </div>
+            <div class="field">
+              <label for="estopWledPreset">WLED E-Stop Preset (1-250)</label>
+              <input id="estopWledPreset" type="number" min="1" max="250">
+            </div>
+            <div class="hint">Default switch mode is active-low with internal pull-up. WLED sync will snapshot current state on press, apply preset, and restore snapshot on release.</div>
           </div>
         </div>
       </div>

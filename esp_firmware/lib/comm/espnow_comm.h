@@ -12,5 +12,7 @@ int getEStopSwitchRawLevel();
 uint32_t getEStopPacketCount();
 bool isEStopPeerConfigured();
 String getEStopTargetMac();
+String getEStopWledStatus();
+bool isEStopWledSnapshotReady();
 
 #endif

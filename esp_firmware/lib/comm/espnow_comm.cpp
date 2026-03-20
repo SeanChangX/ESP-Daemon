@@ -8,6 +8,9 @@
 #endif
 
 #include <WiFi.h>
+#if APP_MODE == APP_MODE_ESTOP
+#include <HTTPClient.h>
+#endif
 #include <esp_now.h>
 #include <esp_wifi.h>
 
@@ -88,10 +91,19 @@ void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* incomingData, in
 #else
 
 constexpr uint32_t kEStopSendIntervalMs = 80;
+constexpr uint32_t kEStopDebounceMs = 35;
+constexpr uint32_t kWledRestoreRetryIntervalMs = 1000;
+constexpr uint16_t kWledHttpTimeoutMs = 1500;
+constexpr size_t kWledSnapshotMaxBytes = 4096;
 constexpr char kEStopPayload[] = "STOP";
 
 bool g_estopSwitchPressed = false;
 int g_estopSwitchRawLevel = HIGH;
+int g_estopLastObservedRawLevel = HIGH;
+unsigned long g_estopRawChangedAtMs = 0;
+bool g_estopDebounceInitialized = false;
+bool g_estopEdgeInitialized = false;
+bool g_estopLastStablePressed = false;
 uint32_t g_estopPacketCount = 0;
 unsigned long g_lastEStopSendMs = 0;
 bool g_estopPeerConfigured = false;
@@ -99,6 +111,181 @@ std::array<uint8_t, 6> g_estopPeerMac = {0, 0, 0, 0, 0, 0};
 String g_estopPeerMacText;
 uint8_t g_estopSwitchPinConfigured = 255;
 bool g_estopSwitchActiveHighConfigured = false;
+bool g_wledSnapshotValid = false;
+bool g_wledRestorePending = false;
+unsigned long g_wledLastRestoreAttemptMs = 0;
+String g_wledSnapshotJson;
+String g_wledStatus = "disabled";
+
+String normalizeWledBaseUrl() {
+  String url = getAppSettings().estop_wled_base_url;
+  url.trim();
+  if (url.endsWith("/")) {
+    url.remove(url.length() - 1);
+  }
+  return url;
+}
+
+bool beginHttp(HTTPClient& http, const String& url) {
+  http.setTimeout(kWledHttpTimeoutMs);
+  return http.begin(url);
+}
+
+bool wledHttpGet(const String& url, String& responseBody) {
+  HTTPClient http;
+  if (!beginHttp(http, url)) {
+    return false;
+  }
+
+  const int httpCode = http.GET();
+  if (httpCode != HTTP_CODE_OK) {
+    http.end();
+    return false;
+  }
+
+  responseBody = http.getString();
+  http.end();
+  return true;
+}
+
+bool wledHttpPostJson(const String& url, const String& payload) {
+  HTTPClient http;
+  if (!beginHttp(http, url)) {
+    return false;
+  }
+
+  http.addHeader("Content-Type", "application/json");
+  const int httpCode = http.POST(payload);
+  const bool ok = (httpCode >= 200 && httpCode < 300);
+  http.end();
+  return ok;
+}
+
+bool wledControlEnabled() {
+  const AppSettings& settings = getAppSettings();
+  return settings.estop_wled_enabled && settings.estop_wled_base_url.length() > 0;
+}
+
+void handleWledPressedEdge() {
+  if (!wledControlEnabled()) {
+    g_wledStatus = "disabled";
+    g_wledSnapshotValid = false;
+    g_wledRestorePending = false;
+    g_wledSnapshotJson = "";
+    return;
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    g_wledStatus = "wifi_disconnected";
+    return;
+  }
+
+  const String baseUrl = normalizeWledBaseUrl();
+  if (baseUrl.length() == 0) {
+    g_wledStatus = "url_empty";
+    return;
+  }
+  const String stateUrl = baseUrl + "/json/state";
+
+  String snapshot;
+  if (!wledHttpGet(stateUrl, snapshot)) {
+    g_wledStatus = "snapshot_get_failed";
+    g_wledSnapshotValid = false;
+    g_wledRestorePending = false;
+    g_wledSnapshotJson = "";
+    return;
+  }
+
+  if (snapshot.length() == 0 || snapshot.length() > kWledSnapshotMaxBytes) {
+    g_wledStatus = "snapshot_invalid";
+    g_wledSnapshotValid = false;
+    g_wledRestorePending = false;
+    g_wledSnapshotJson = "";
+    return;
+  }
+
+  g_wledSnapshotJson = snapshot;
+  g_wledSnapshotValid = true;
+  g_wledRestorePending = false;
+
+  JsonDocument payload;
+  payload["on"] = true;
+  payload["ps"] = getAppSettings().estop_wled_preset;
+  String payloadText;
+  serializeJson(payload, payloadText);
+
+  if (wledHttpPostJson(stateUrl, payloadText)) {
+    g_wledStatus = "estop_preset_applied";
+  } else {
+    g_wledStatus = "preset_apply_failed";
+  }
+}
+
+void tryRestoreWledState() {
+  if (!g_wledRestorePending || !g_wledSnapshotValid) {
+    return;
+  }
+
+  if (g_estopSwitchPressed) {
+    return;
+  }
+
+  const unsigned long now = millis();
+  if ((now - g_wledLastRestoreAttemptMs) < kWledRestoreRetryIntervalMs) {
+    return;
+  }
+  g_wledLastRestoreAttemptMs = now;
+
+  if (WiFi.status() != WL_CONNECTED) {
+    g_wledStatus = "restore_wait_wifi";
+    return;
+  }
+
+  const String baseUrl = normalizeWledBaseUrl();
+  if (baseUrl.length() == 0) {
+    g_wledStatus = "restore_url_empty";
+    return;
+  }
+  const String stateUrl = baseUrl + "/json/state";
+
+  if (!wledHttpPostJson(stateUrl, g_wledSnapshotJson)) {
+    g_wledStatus = "restore_failed_retrying";
+    return;
+  }
+
+  g_wledStatus = "restored";
+  g_wledRestorePending = false;
+  g_wledSnapshotValid = false;
+  g_wledSnapshotJson = "";
+}
+
+void handleWledReleasedEdge() {
+  if (!wledControlEnabled()) {
+    g_wledStatus = "disabled";
+    g_wledSnapshotValid = false;
+    g_wledRestorePending = false;
+    g_wledSnapshotJson = "";
+    return;
+  }
+
+  if (!g_wledSnapshotValid) {
+    g_wledStatus = "no_snapshot";
+    g_wledRestorePending = false;
+    return;
+  }
+
+  g_wledRestorePending = true;
+  g_wledLastRestoreAttemptMs = 0;
+  tryRestoreWledState();
+}
+
+void handleEStopSwitchEdge(bool pressed) {
+  if (pressed) {
+    handleWledPressedEdge();
+  } else {
+    handleWledReleasedEdge();
+  }
+}
 
 void configureEStopSwitchPin(bool forceReconfigure) {
   const AppSettings& settings = getAppSettings();
@@ -114,15 +301,47 @@ void configureEStopSwitchPin(bool forceReconfigure) {
   // Active-low uses INPUT_PULLUP so a pressed switch can pull the line low.
   const uint8_t mode = settings.estop_switch_active_high ? INPUT : INPUT_PULLUP;
   pinMode(settings.estop_switch_pin, mode);
+
+  // Reset debounce state after pin/logic changes.
+  g_estopDebounceInitialized = false;
 }
 
 void sampleEStopSwitch() {
   configureEStopSwitchPin(false);
 
   const AppSettings& settings = getAppSettings();
+  const unsigned long now = millis();
   const int raw = digitalRead(settings.estop_switch_pin);
-  g_estopSwitchRawLevel = raw;
-  g_estopSwitchPressed = (raw == (settings.estop_switch_active_high ? HIGH : LOW));
+
+  if (!g_estopDebounceInitialized) {
+    g_estopDebounceInitialized = true;
+    g_estopSwitchRawLevel = raw;
+    g_estopLastObservedRawLevel = raw;
+    g_estopRawChangedAtMs = now;
+  }
+
+  if (raw != g_estopLastObservedRawLevel) {
+    g_estopLastObservedRawLevel = raw;
+    g_estopRawChangedAtMs = now;
+  }
+
+  if ((now - g_estopRawChangedAtMs) >= kEStopDebounceMs) {
+    g_estopSwitchRawLevel = g_estopLastObservedRawLevel;
+  }
+
+  g_estopSwitchPressed =
+    (g_estopSwitchRawLevel == (settings.estop_switch_active_high ? HIGH : LOW));
+
+  if (!g_estopEdgeInitialized) {
+    g_estopEdgeInitialized = true;
+    g_estopLastStablePressed = g_estopSwitchPressed;
+    return;
+  }
+
+  if (g_estopSwitchPressed != g_estopLastStablePressed) {
+    g_estopLastStablePressed = g_estopSwitchPressed;
+    handleEStopSwitchEdge(g_estopSwitchPressed);
+  }
 }
 
 void clearEStopPeer(bool verboseLog) {
@@ -250,6 +469,7 @@ void initESPNow() {
 #if APP_MODE == APP_MODE_ESTOP
   configureEStopSwitchPin(true);
   sampleEStopSwitch();
+  g_wledStatus = wledControlEnabled() ? "ready" : "disabled";
 #endif
 
   // Keep current Wi-Fi mode when Wi-Fi manager is enabled, so NetWizard AP/portal
@@ -294,6 +514,7 @@ void handleESPNow() {
 #else
   sampleEStopSwitch();
   sendEStopIfPressed();
+  tryRestoreWledState();
 #endif
 }
 
@@ -334,5 +555,21 @@ String getEStopTargetMac() {
   return g_estopPeerMacText;
 #else
   return String();
+#endif
+}
+
+String getEStopWledStatus() {
+#if APP_MODE == APP_MODE_ESTOP
+  return g_wledStatus;
+#else
+  return String("n/a");
+#endif
+}
+
+bool isEStopWledSnapshotReady() {
+#if APP_MODE == APP_MODE_ESTOP
+  return g_wledSnapshotValid;
+#else
+  return false;
 #endif
 }

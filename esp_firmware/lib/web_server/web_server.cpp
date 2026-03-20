@@ -109,6 +109,23 @@ static void handleDeviceInfoGet() {
   server.send(200, "application/json", output);
 }
 
+static void handleEStopStatusGet() {
+  JsonDocument doc;
+  doc["pressed"]              = isEStopSwitchPressed();
+  doc["rawLevel"]             = getEStopSwitchRawLevel();
+  doc["switchPin"]            = getAppSettings().estop_switch_pin;
+  doc["switchActiveHigh"]     = getAppSettings().estop_switch_active_high;
+  doc["targetMac"]            = getAppSettings().estop_target_mac;
+  doc["targetPeerConfigured"] = isEStopPeerConfigured();
+  doc["effectiveTargetMac"]   = getEStopTargetMac();
+  doc["espNowChannel"]        = wifi_channel;
+  doc["packetsSent"]          = getEStopPacketCount();
+
+  String output;
+  serializeJson(doc, output);
+  server.send(200, "application/json", output);
+}
+
 static bool sendFileFromSPIFFS(const String& path) {
   if (!SPIFFS.exists(path)) {
     return false;
@@ -432,9 +449,15 @@ void initSPIFFS() {
 
 void initWebServer() {
   server.on("/", HTTP_GET, []() {
+#if APP_MODE == APP_MODE_ESTOP
+    if (!sendFileFromSPIFFS("/estop.html")) {
+      server.send(404, "text/plain", "estop.html not found");
+    }
+#else
     if (!sendFileFromSPIFFS("/index.html")) {
       server.send(404, "text/plain", "index.html not found");
     }
+#endif
   });
 
   server.on("/readings", HTTP_GET, []() {
@@ -450,6 +473,15 @@ void initWebServer() {
   });
 
   server.on("/device", HTTP_GET, handleDeviceInfoGet);
+  server.on("/estop/status", HTTP_GET, handleEStopStatusGet);
+
+#if APP_MODE == APP_MODE_ESTOP
+  server.on("/settings.html", HTTP_GET, []() {
+    if (!sendFileFromSPIFFS("/estop.html")) {
+      server.send(404, "text/plain", "estop.html not found");
+    }
+  });
+#endif
 
   server.on("/power", HTTP_POST, handlePowerPost);
   server.on("/emergency", HTTP_POST, handleEmergencyPost);
@@ -481,7 +513,11 @@ void initWebServer() {
     }
 
     if (path == "/") {
+#if APP_MODE == APP_MODE_ESTOP
+      path = "/estop.html";
+#else
       path = "/index.html";
+#endif
     }
 
     if (sendFileFromSPIFFS(path)) {
@@ -492,7 +528,12 @@ void initWebServer() {
     const int lastSlash = path.lastIndexOf('/');
     const int lastDot = path.lastIndexOf('.');
     const bool hasExtension = (lastDot > lastSlash);
-    if (!hasExtension && sendFileFromSPIFFS("/index.html")) {
+    if (!hasExtension &&
+#if APP_MODE == APP_MODE_ESTOP
+        sendFileFromSPIFFS("/estop.html")) {
+#else
+        sendFileFromSPIFFS("/index.html")) {
+#endif
       return;
     }
 

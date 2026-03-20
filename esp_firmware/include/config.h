@@ -22,6 +22,20 @@
 #endif
 
 // ============================================================================
+// Application Mode
+// ============================================================================
+#define APP_MODE_DAEMON 1
+#define APP_MODE_ESTOP  2
+
+#ifndef APP_MODE
+#define APP_MODE APP_MODE_DAEMON
+#endif
+
+#if APP_MODE != APP_MODE_DAEMON && APP_MODE != APP_MODE_ESTOP
+#error "APP_MODE must be APP_MODE_DAEMON or APP_MODE_ESTOP"
+#endif
+
+// ============================================================================
 // Compile-Time Feature Switches (0/1)
 // ============================================================================
 // This layer controls compile-time inclusion.
@@ -37,19 +51,35 @@
 #define ENABLE_ESPNOW                1
 #endif
 #ifndef ENABLE_MICROROS
+#if APP_MODE == APP_MODE_ESTOP
+#define ENABLE_MICROROS              0
+#else
 #define ENABLE_MICROROS              1
 #endif
+#endif
 #ifndef ENABLE_LED_TASK
+#if APP_MODE == APP_MODE_ESTOP
+#define ENABLE_LED_TASK              0
+#else
 #define ENABLE_LED_TASK              1
 #endif
+#endif
 #ifndef ENABLE_SENSOR_TASK
+#if APP_MODE == APP_MODE_ESTOP
+#define ENABLE_SENSOR_TASK           0
+#else
 #define ENABLE_SENSOR_TASK           1
+#endif
 #endif
 #ifndef ENABLE_SYSTEM_SERVICE_TASK
 #define ENABLE_SYSTEM_SERVICE_TASK   1
 #endif
 #ifndef ENABLE_POWER_CONTROL_POLL
+#if APP_MODE == APP_MODE_ESTOP
+#define ENABLE_POWER_CONTROL_POLL    0
+#else
 #define ENABLE_POWER_CONTROL_POLL    1
+#endif
 #endif
 
 // Dependency guards to prevent invalid feature combinations.

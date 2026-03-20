@@ -4,6 +4,7 @@
 #include "app_settings.h"
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <cstring>
 #include <ESPmDNS.h>
 #include <AsyncTCP.h>
@@ -28,7 +29,11 @@ String getProvisioningSsid() {
   const uint32_t macTail = static_cast<uint32_t>(efuse & 0xFFFFFFULL);
   char suffix[7];
   snprintf(suffix, sizeof(suffix), "%06X", static_cast<unsigned>(macTail));
+#if APP_MODE == APP_MODE_ESTOP
+  return String("ESP-EStop_") + suffix;
+#else
   return String("ESP-Daemon_") + suffix;
+#endif
 }
 
 String getDeviceNameLower() {
@@ -250,6 +255,42 @@ void updateWifiChannelCache() {
   wifi_channel = (WiFi.status() == WL_CONNECTED) ? WiFi.channel() : getAppSettings().espnow_channel;
 }
 
+void persistEspNowChannelFromConnectedWifi() {
+#if APP_MODE == APP_MODE_ESTOP
+  static int lastSavedChannel = -1;
+
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+
+  const int connectedChannel = WiFi.channel();
+  if (connectedChannel < 1 || connectedChannel > 13) {
+    return;
+  }
+
+  if (getAppSettings().espnow_channel == connectedChannel) {
+    lastSavedChannel = connectedChannel;
+    return;
+  }
+
+  if (lastSavedChannel == connectedChannel) {
+    return;
+  }
+
+  JsonDocument patch;
+  patch["espNowChannel"] = connectedChannel;
+
+  String saveError;
+  if (updateAppSettingsFromJson(patch.as<JsonObjectConst>(), saveError)) {
+    lastSavedChannel = connectedChannel;
+    DAEMON_LOGF("E-stop stored WiFi channel for ESP-NOW: %d\n", connectedChannel);
+  } else {
+    DAEMON_LOGF("E-stop failed to store WiFi channel (%d): %s\n",
+                connectedChannel, saveError.c_str());
+  }
+#endif
+}
+
 } // namespace
 
 void initWiFi() {
@@ -267,6 +308,7 @@ void initWiFi() {
   if (WiFi.status() == WL_CONNECTED) {
     DAEMON_LOGF("WiFi connected: %s\n", WiFi.localIP().toString().c_str());
     releaseNetWizardHttpIfConnected();
+    persistEspNowChannelFromConnectedWifi();
   } else {
     DAEMON_LOGLN("WiFi not connected, configuration AP remains active");
     ensurePortalIfDisconnected();
@@ -286,6 +328,7 @@ void handleWiFi() {
   if (WiFi.status() == WL_CONNECTED) {
     releaseNetWizardHttpIfConnected();
     applyMdnsName();
+    persistEspNowChannelFromConnectedWifi();
   }
 }
 

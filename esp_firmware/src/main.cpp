@@ -4,7 +4,9 @@
 #include <Arduino.h>
 #include <SPIFFS.h>
 
+#if APP_MODE == APP_MODE_DAEMON
 #include "ros_node.h"
+#endif
 
 #if ENABLE_LED_TASK
 #include "led_control.h"
@@ -50,6 +52,7 @@ static void createPinnedTask(
   }
 }
 
+#if APP_MODE == APP_MODE_DAEMON
 void microROSTask(void* pvParameters) {
   (void)pvParameters;
 #if ENABLE_MICROROS
@@ -111,6 +114,7 @@ void microROSTask(void* pvParameters) {
   vTaskDelete(NULL);
 #endif
 }
+#endif
 
 void systemServiceTask(void* pvParameters) {
   (void)pvParameters;
@@ -120,6 +124,9 @@ void systemServiceTask(void* pvParameters) {
 #endif
 #if ENABLE_WEB_SERVER
     handleWebServer();
+#endif
+#if ENABLE_ESPNOW
+    handleESPNow();
 #endif
 #if ENABLE_POWER_CONTROL_POLL
     updatePowerControls();
@@ -146,7 +153,9 @@ void setup() {
   //  NOTE: DO NOT CHANGE THE ORDER OF THE FOLLOWING INITIALIZATIONS
   // ================================================================
 
+#if APP_MODE == APP_MODE_DAEMON
   initROS();
+#endif
 
 #if ENABLE_LED_TASK
   if (getAppSettings().runtime_led_enabled) {
@@ -162,7 +171,7 @@ void setup() {
   }
 #endif
 
-#if ENABLE_MICROROS
+#if APP_MODE == APP_MODE_DAEMON && ENABLE_MICROROS
   if (getAppSettings().runtime_microros_enabled) {
     createPinnedTask(microROSTask, "microROS", TASK_STACK_MICROROS_BYTES, TASK_PRIO_MICROROS, &microRosTaskHandle);
   }

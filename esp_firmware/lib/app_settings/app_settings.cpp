@@ -1,4 +1,5 @@
 #include "app_settings.h"
+#include "config.h"
 
 #include <ArduinoJson.h>
 #include <SPIFFS.h>
@@ -64,7 +65,11 @@ String defaultDeviceNameFromMac() {
   const uint32_t macTail = static_cast<uint32_t>(efuse & 0xFFFFFFULL);
   char tail[7];
   snprintf(tail, sizeof(tail), "%06x", static_cast<unsigned>(macTail));
+#if APP_MODE == APP_MODE_ESTOP
+  return String("esp-estop_") + String(tail);
+#else
   return String("esp-daemon_") + String(tail);
+#endif
 }
 
 void updateCalibrationFromDivider() {
@@ -81,10 +86,17 @@ void applyDefaults() {
   g_settings.pin_protection_enabled = false;
   g_settings.pin_code = "1234";
 
+#if APP_MODE == APP_MODE_ESTOP
+  g_settings.runtime_espnow_enabled = true;
+  g_settings.runtime_microros_enabled = false;
+  g_settings.runtime_led_enabled = false;
+  g_settings.runtime_sensor_enabled = false;
+#else
   g_settings.runtime_espnow_enabled = true;
   g_settings.runtime_microros_enabled = true;
   g_settings.runtime_led_enabled = true;
   g_settings.runtime_sensor_enabled = true;
+#endif
 
   g_settings.chassis_switch_pin = 8;
   g_settings.mission_switch_pin = 9;
@@ -120,6 +132,9 @@ void applyDefaults() {
   g_settings.mros_timeout_ms = 100;
   g_settings.mros_ping_interval_ms = 1000;
   g_settings.espnow_channel = kEspNowChannelDefault;
+  g_settings.estop_target_mac = "";
+  g_settings.estop_switch_pin = 8;
+  g_settings.estop_switch_active_high = false;
 
   g_settings.emergency_switch_macs.clear();
 
@@ -273,6 +288,20 @@ void loadFromJson(const JsonObjectConst& json) {
   loadUInt32(json, "mrosTimeoutMs",                 g_settings.mros_timeout_ms);
   loadUInt32(json, "mrosPingIntervalMs",            g_settings.mros_ping_interval_ms);
   loadUInt8(json,  "espNowChannel",                 g_settings.espnow_channel);
+  loadString(json, "estopTargetMac",                g_settings.estop_target_mac);
+  loadUInt8(json,  "estopSwitchPin",                g_settings.estop_switch_pin);
+  loadBool(json,   "estopSwitchActiveHigh",         g_settings.estop_switch_active_high);
+  g_settings.estop_target_mac.replace("-", ":");
+  g_settings.estop_target_mac.trim();
+  g_settings.estop_target_mac.toLowerCase();
+  if (g_settings.estop_target_mac.length() > 0) {
+    std::array<uint8_t, 6> parsedMac = {};
+    if (parseMacString(g_settings.estop_target_mac, parsedMac)) {
+      g_settings.estop_target_mac = toMacString(parsedMac);
+    } else {
+      g_settings.estop_target_mac = "";
+    }
+  }
 
   {
     const JsonVariantConst v = json["controlPanelUrl"];
@@ -386,6 +415,9 @@ void appSettingsToJson(JsonDocument& doc, bool include_pin_code) {
   doc["mrosTimeoutMs"]              = g_settings.mros_timeout_ms;
   doc["mrosPingIntervalMs"]         = g_settings.mros_ping_interval_ms;
   doc["espNowChannel"]              = g_settings.espnow_channel;
+  doc["estopTargetMac"]             = g_settings.estop_target_mac;
+  doc["estopSwitchPin"]             = g_settings.estop_switch_pin;
+  doc["estopSwitchActiveHigh"]      = g_settings.estop_switch_active_high;
 
   doc["controlPanelUrl"] = g_settings.control_panel_url;
 
@@ -509,6 +541,23 @@ bool updateAppSettingsFromJson(const JsonObjectConst& json, String& error) {
     return false;
   }
 
+#if APP_MODE == APP_MODE_ESTOP
+  if (g_settings.estop_switch_pin > kGpioPinMaxUi) {
+    g_settings = backup;
+    error = "estopSwitchPin must be in range 0..48";
+    return false;
+  }
+
+  if (g_settings.estop_target_mac.length() > 0) {
+    std::array<uint8_t, 6> parsedMac = {};
+    if (!parseMacString(g_settings.estop_target_mac, parsedMac)) {
+      g_settings = backup;
+      error = "estopTargetMac must be a valid MAC address";
+      return false;
+    }
+    g_settings.estop_target_mac = toMacString(parsedMac);
+  }
+#else
   if (g_settings.battery_low_threshold < g_settings.battery_disconnect_threshold) {
     g_settings = backup;
     error = "batteryLowThreshold must be >= batteryDisconnectThreshold";
@@ -643,6 +692,7 @@ bool updateAppSettingsFromJson(const JsonObjectConst& json, String& error) {
     error = "voltmeterOffset must be in range -25..25 V";
     return false;
   }
+#endif
 
   if (!saveAppSettings()) {
     g_settings = backup;

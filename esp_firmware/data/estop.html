@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html class="dark-mode" lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>ESP-Daemon E-STOP</title>
+    <link rel="icon" type="image/png" href="favicon.png">
+    <link rel="stylesheet" type="text/css" href="style.css">
+  </head>
+  <body>
+    <div class="topnav">
+      <h1>ESP-Daemon E-STOP</h1>
+      <div class="topnav-meta" aria-label="Device">
+        <div class="topnav-meta__chip">
+          <span class="topnav-meta__label">MAC:</span>
+          <span id="deviceMac" class="topnav-meta__value">00-00-00-00-00-00</span>
+        </div>
+        <div class="topnav-meta__chip">
+          <span class="topnav-meta__label">VER:</span>
+          <span id="deviceVersion" class="topnav-meta__value">0.0.0</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-wrap">
+      <div class="settings-grid">
+        <div class="settings-col">
+          <div class="settings-card">
+            <h3>E-STOP Status</h3>
+            <div class="status-items-container">
+              <div class="status-item status-item--split">
+                <span class="status-item__label">Switch</span>
+                <span class="status-pill" id="switchState">unknown</span>
+              </div>
+              <div class="status-item status-item--split">
+                <span class="status-item__label">Raw GPIO</span>
+                <span class="status-pill" id="switchRaw">-</span>
+              </div>
+              <div class="status-item status-item--split">
+                <span class="status-item__label">ESP-NOW Channel</span>
+                <span class="status-pill" id="espNowChannelRuntime">-</span>
+              </div>
+              <div class="status-item status-item--split">
+                <span class="status-item__label">Peer Status</span>
+                <span class="status-pill" id="peerStatus">not configured</span>
+              </div>
+              <div class="status-item status-item--split">
+                <span class="status-item__label">Packets Sent</span>
+                <span class="status-pill" id="packetCount">0</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-card">
+            <h3>E-STOP Settings</h3>
+            <div class="field">
+              <label for="estopTargetMac">ESP-Daemon MAC (target)</label>
+              <input id="estopTargetMac" type="text" inputmode="text" autocomplete="off" placeholder="AA-BB-CC-DD-EE-FF" maxlength="17" spellcheck="false">
+            </div>
+            <div class="field">
+              <label for="estopSwitchPin">E-Stop GPIO</label>
+              <input id="estopSwitchPin" type="number" min="0" max="48">
+            </div>
+            <div class="settings-toggle-stack">
+              <div class="settings-switch-row">
+                <label class="settings-switch-label" for="estopSwitchActiveHigh">Switch active when HIGH</label>
+                <label class="switch-control">
+                  <input id="estopSwitchActiveHigh" type="checkbox">
+                  <span class="switch-slider"></span>
+                </label>
+              </div>
+            </div>
+            <div class="hint">Default is active-low with internal pull-up. Pressed state will repeatedly broadcast STOP over ESP-NOW.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <div class="actions__buttons" role="toolbar" aria-label="E-stop actions">
+          <button type="button" class="btn actions__btn actions__btn--narrow" id="saveBtn" title="Save settings" aria-label="Save settings">
+            <span class="btn-action-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                <path d="M17 21V13H7v8"></path>
+                <path d="M7 3v5h8"></path>
+              </svg>
+            </span>
+          </button>
+          <button type="button" class="btn actions__btn actions__btn--narrow" id="reloadBtn" title="Reload status and settings" aria-label="Reload status and settings">
+            <span class="btn-action-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12a9 9 0 1 1-3-6.7"></path>
+                <path d="M21 3v6h-6"></path>
+              </svg>
+            </span>
+          </button>
+        </div>
+        <div id="saveStatus" class="actions__status" role="status" aria-live="polite"></div>
+      </div>
+    </div>
+
+    <div class="footer">
+      © 2026 Developed by <a href="https://github.com/SeanChangX" target="_blank">SeanChangX</a>
+    </div>
+
+    <div class="speed-dial" aria-label="Theme toggle">
+      <button type="button" id="modeToggle" class="modern-floating-btn" aria-label="Switch to light mode">
+        <div class="btn-icon">
+          <span class="theme-icon theme-icon-sun" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="4"></circle>
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path>
+            </svg>
+          </span>
+          <span class="theme-icon theme-icon-moon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3c0.25 0 0.5 0.01 0.74 0.03A7 7 0 0 0 21 12.79z"></path>
+            </svg>
+          </span>
+        </div>
+      </button>
+    </div>
+
+    <script src="estop.js"></script>
+  </body>
+</html>

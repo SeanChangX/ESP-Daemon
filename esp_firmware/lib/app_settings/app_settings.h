@@ -50,6 +50,9 @@ struct AppSettings {
   uint32_t mros_timeout_ms;
   uint32_t mros_ping_interval_ms;
   uint8_t espnow_channel;
+  String estop_target_mac;
+  uint8_t estop_switch_pin;
+  bool estop_switch_active_high;
 
   std::vector<std::array<uint8_t, 6>> emergency_switch_macs;
 

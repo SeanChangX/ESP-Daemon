@@ -307,8 +307,7 @@ textarea:focus-visible {
   color: var(--nav-button-text);
 }
 
-/* Theme icons on red FABs: always white */
-.floating-buttons .theme-icon {
+.modern-floating-btn .theme-icon {
   color: #ffffff;
 }
 
@@ -766,10 +765,16 @@ textarea:focus-visible {
   border: none;
   box-shadow: none;
   transition: background 0.2s ease;
+  cursor: pointer;
 }
 
 .power-switch-row:hover {
   background: rgba(255, 255, 255, 0.11);
+}
+
+.power-switch-row--disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
 }
 
 .power-switch-label {
@@ -851,6 +856,10 @@ textarea:focus-visible {
 
 .light-mode .power-switch-row:hover {
   background: #fafafa;
+}
+
+.light-mode .power-switch-row--disabled:hover {
+  background: #ffffff;
 }
 
 .light-mode .switch-slider {

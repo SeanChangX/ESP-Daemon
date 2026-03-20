@@ -501,6 +501,10 @@ function setEmergencyPowerPanelLocked(locked) {
     var el = document.getElementById(cfg.switchId);
     if (el) {
       el.disabled = locked;
+      var row = el.closest('.power-switch-row');
+      if (row) {
+        row.classList.toggle('power-switch-row--disabled', locked);
+      }
     }
   });
   if (stopBtn) {
@@ -710,6 +714,19 @@ document.addEventListener('DOMContentLoaded', function() {
     const switchElement = document.getElementById(config.switchId);
     if (!switchElement) {
       return;
+    }
+    const row = switchElement.closest('.power-switch-row');
+
+    if (row) {
+      row.addEventListener('click', function(e) {
+        if (emergencyPowerPanelLocked || switchElement.disabled) {
+          return;
+        }
+        if (e.target && e.target.closest('.switch-control')) {
+          return;
+        }
+        switchElement.click();
+      });
     }
 
     switchElement.addEventListener('change', function() {

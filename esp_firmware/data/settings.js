@@ -7,8 +7,8 @@ const ESP_DAEMON_PLACEHOLDER_VERSION = '0.0.0';
 
 const SETTINGS_AUTH_STORAGE_KEY = 'esp_daemon_settings_auth_pin';
 
-/** Must match firmware kMaxEmergencyMacs */
-const EMERGENCY_MAC_MAX = 16;
+/** Must match firmware kMaxEmergencySources */
+const EMERGENCY_SOURCE_MAX = 16;
 
 /** Go Live / Live Server / file preview: no ESP at this origin. */
 function isLocalUiPreview() {
@@ -53,9 +53,10 @@ function setPreviewHint(msg) {
 const FIELD_IDS = [
   'deviceName', 'controlPanelUrl', 'pinProtectionEnabled', 'pinCode',
   'runtimeEspNowEnabled', 'runtimeMicroRosEnabled', 'runtimeLedEnabled', 'runtimeSensorEnabled',
+  'controlGroup1Name', 'controlGroup2Name', 'controlGroup3Name',
   'rosNodeName', 'rosDomainId', 'rosTimerMs', 'mrosTimeoutMs', 'mrosPingIntervalMs', 'espNowChannel',
-  'chassisSwitchPin', 'missionSwitchPin', 'negPressureSwitchPin',
-  'chassisPowerPin', 'missionPower12vPin', 'missionPower7v4Pin', 'negPressurePowerPin',
+  'controlGroup1SwitchPin', 'controlGroup2SwitchPin', 'controlGroup3SwitchPin',
+  'controlGroup1PowerPin', 'controlGroup2Power12vPin', 'controlGroup2Power7v4Pin', 'controlGroup3PowerPin',
   'switchActiveHigh', 'powerActiveHigh',
   'ledPin', 'ledCount', 'ledBrightness', 'ledOverrideDurationMs',
   'voltmeterPin', 'voltageDividerR1', 'voltageDividerR2', 'voltmeterCalibration', 'voltmeterOffset',
@@ -206,8 +207,8 @@ function getDeviceNameForExportFilename() {
   return sanitizeFilenamePart(window.location.hostname || '', 'device');
 }
 
-function getExportTimestampUtcCompact() {
-  const d = new Date();
+function getExportTimestampUtcCompact(dateValue) {
+  const d = dateValue || new Date();
   const y = String(d.getUTCFullYear());
   const mo = String(d.getUTCMonth() + 1).padStart(2, '0');
   const da = String(d.getUTCDate()).padStart(2, '0');
@@ -215,6 +216,11 @@ function getExportTimestampUtcCompact() {
   const mi = String(d.getUTCMinutes()).padStart(2, '0');
   const s = String(d.getUTCSeconds()).padStart(2, '0');
   return y + mo + da + 'T' + h + mi + s + 'Z';
+}
+
+function getExportTimestampUtcIso(dateValue) {
+  const d = dateValue || new Date();
+  return d.toISOString();
 }
 
 /** Normalize to aa:bb:cc:dd:ee:ff; input may use : or - between pairs. */
@@ -235,103 +241,185 @@ function macColonToDisplayHyphen(macColon) {
     .toUpperCase();
 }
 
-function clearEmergencyMacError() {
-  const el = document.getElementById('emergencyMacError');
+function clearEmergencySourceError() {
+  const el = document.getElementById('emergencySourceError');
   if (el) {
     el.textContent = '';
   }
 }
 
-function setEmergencyMacError(msg) {
-  const el = document.getElementById('emergencyMacError');
+function setEmergencySourceError(msg) {
+  const el = document.getElementById('emergencySourceError');
   if (el) {
     el.textContent = msg || '';
   }
 }
 
-function getEmergencyMacListUl() {
-  return document.getElementById('emergencyMacList');
+function getEmergencySourceListUl() {
+  return document.getElementById('emergencySourceList');
 }
 
-function getEmergencyMacPayloadList() {
-  const ul = getEmergencyMacListUl();
+function normalizeEmergencySourceEntry(raw) {
+  if (typeof raw === 'string') {
+    const parsed = normalizeMacColonFromAny(raw);
+    if (!parsed) {
+      return null;
+    }
+    return {
+      mac: parsed,
+      controlGroup1: true,
+      controlGroup2: false,
+      controlGroup3: false
+    };
+  }
+
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+
+  const parsed = normalizeMacColonFromAny(raw.mac);
+  if (!parsed) {
+    return null;
+  }
+
+  const hasGroupFlag =
+    typeof raw.controlGroup1 === 'boolean' ||
+    typeof raw.controlGroup2 === 'boolean' ||
+    typeof raw.controlGroup3 === 'boolean';
+
+  return {
+    mac: parsed,
+    controlGroup1: hasGroupFlag ? !!raw.controlGroup1 : true,
+    controlGroup2: hasGroupFlag ? !!raw.controlGroup2 : false,
+    controlGroup3: hasGroupFlag ? !!raw.controlGroup3 : false
+  };
+}
+
+function getEmergencySourcePayloadList() {
+  const ul = getEmergencySourceListUl();
   if (!ul) {
     return [];
   }
   return Array.from(ul.querySelectorAll('li[data-mac]'))
-    .map((li) => li.getAttribute('data-mac'))
-    .filter(Boolean);
+    .map((li) => ({
+      mac: li.getAttribute('data-mac') || '',
+      controlGroup1: li.getAttribute('data-g1') === '1',
+      controlGroup2: li.getAttribute('data-g2') === '1',
+      controlGroup3: li.getAttribute('data-g3') === '1'
+    }))
+    .filter((src) => !!src.mac);
 }
 
-function emergencyMacListHas(macColon) {
+function emergencySourceListHas(macColon) {
   const t = macColon.toLowerCase();
-  return getEmergencyMacPayloadList().some((m) => m.toLowerCase() === t);
+  return getEmergencySourcePayloadList().some((src) => src.mac.toLowerCase() === t);
 }
 
-function addEmergencyMacToDom(macColon) {
-  const ul = getEmergencyMacListUl();
+function summarizeEmergencyTargets(src) {
+  const tags = [];
+  if (src.controlGroup1) tags.push('Group1');
+  if (src.controlGroup2) tags.push('Group2');
+  if (src.controlGroup3) tags.push('Group3');
+  return tags.join(' / ');
+}
+
+function addEmergencySourceToDom(src) {
+  const ul = getEmergencySourceListUl();
   if (!ul) {
     return;
   }
+
+  const normalized = normalizeEmergencySourceEntry(src);
+  if (!normalized) {
+    return;
+  }
+
   const li = document.createElement('li');
-  li.setAttribute('data-mac', macColon);
+  li.setAttribute('data-mac', normalized.mac);
+  li.setAttribute('data-g1', normalized.controlGroup1 ? '1' : '0');
+  li.setAttribute('data-g2', normalized.controlGroup2 ? '1' : '0');
+  li.setAttribute('data-g3', normalized.controlGroup3 ? '1' : '0');
+
   const addr = document.createElement('span');
   addr.className = 'mac-whitelist-list__addr';
-  addr.textContent = macColonToDisplayHyphen(macColon);
+  addr.textContent = macColonToDisplayHyphen(normalized.mac);
+
+  const targets = document.createElement('span');
+  targets.className = 'mac-whitelist-list__targets';
+  targets.textContent = summarizeEmergencyTargets(normalized);
+
+  const meta = document.createElement('div');
+  meta.className = 'mac-whitelist-list__meta';
+  meta.appendChild(addr);
+  meta.appendChild(targets);
+
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'btn mac-whitelist-remove';
   btn.textContent = 'Remove';
-  btn.setAttribute('aria-label', 'Remove ' + macColonToDisplayHyphen(macColon));
+  btn.setAttribute('aria-label', 'Remove ' + macColonToDisplayHyphen(normalized.mac));
   btn.addEventListener('click', function () {
     li.remove();
-    clearEmergencyMacError();
+    clearEmergencySourceError();
   });
-  li.appendChild(addr);
+  li.appendChild(meta);
   li.appendChild(btn);
   ul.appendChild(li);
 }
 
-function clearEmergencyMacListDom() {
-  const ul = getEmergencyMacListUl();
+function clearEmergencySourceListDom() {
+  const ul = getEmergencySourceListUl();
   if (ul) {
     ul.innerHTML = '';
   }
 }
 
-function applyEmergencyMacListFromServer(arr) {
-  clearEmergencyMacListDom();
+function applyEmergencySourceListFromServer(arr) {
+  clearEmergencySourceListDom();
   if (!Array.isArray(arr)) {
     return;
   }
   arr.forEach((raw) => {
-    const m = normalizeMacColonFromAny(raw);
-    if (m) {
-      addEmergencyMacToDom(m);
+    const src = normalizeEmergencySourceEntry(raw);
+    if (src) {
+      addEmergencySourceToDom(src);
     }
   });
 }
 
-function tryAddEmergencyMacFromInput() {
-  const input = document.getElementById('emergencyMacInput');
+function tryAddEmergencySourceFromInput() {
+  const input = document.getElementById('emergencySourceInput');
+  const group1 = document.getElementById('emergencySourceGroup1');
+  const group2 = document.getElementById('emergencySourceGroup2');
+  const group3 = document.getElementById('emergencySourceGroup3');
   if (!input) {
     return;
   }
-  clearEmergencyMacError();
+  clearEmergencySourceError();
   const parsed = normalizeMacColonFromAny(input.value);
   if (!parsed) {
-    setEmergencyMacError('Invalid MAC. Use 12 hex digits with : or - between pairs (e.g. AA-BB-CC-DD-EE-FF).');
+    setEmergencySourceError('Invalid MAC. Use 12 hex digits with : or - between pairs (e.g. AA-BB-CC-DD-EE-FF).');
     return;
   }
-  if (emergencyMacListHas(parsed)) {
-    setEmergencyMacError('This MAC is already listed.');
+  if (emergencySourceListHas(parsed)) {
+    setEmergencySourceError('This MAC is already listed.');
     return;
   }
-  if (getEmergencyMacPayloadList().length >= EMERGENCY_MAC_MAX) {
-    setEmergencyMacError('Maximum ' + EMERGENCY_MAC_MAX + ' addresses.');
+  const source = {
+    mac: parsed,
+    controlGroup1: !!(group1 && group1.checked),
+    controlGroup2: !!(group2 && group2.checked),
+    controlGroup3: !!(group3 && group3.checked)
+  };
+  if (!source.controlGroup1 && !source.controlGroup2 && !source.controlGroup3) {
+    setEmergencySourceError('Select at least one target control group.');
     return;
   }
-  addEmergencyMacToDom(parsed);
+  if (getEmergencySourcePayloadList().length >= EMERGENCY_SOURCE_MAX) {
+    setEmergencySourceError('Maximum ' + EMERGENCY_SOURCE_MAX + ' sources.');
+    return;
+  }
+  addEmergencySourceToDom(source);
   input.value = '';
   input.focus();
 }
@@ -381,17 +469,17 @@ function initNumericStepperControls() {
   });
 }
 
-function initEmergencyMacWhitelistUi() {
-  const addBtn = document.getElementById('emergencyMacAddBtn');
-  const input = document.getElementById('emergencyMacInput');
+function initEmergencySourceUi() {
+  const addBtn = document.getElementById('emergencySourceAddBtn');
+  const input = document.getElementById('emergencySourceInput');
   if (addBtn) {
-    addBtn.addEventListener('click', tryAddEmergencyMacFromInput);
+    addBtn.addEventListener('click', tryAddEmergencySourceFromInput);
   }
   if (input) {
     input.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') {
         e.preventDefault();
-        tryAddEmergencyMacFromInput();
+        tryAddEmergencySourceFromInput();
       }
     });
   }
@@ -419,7 +507,7 @@ function collectPayload() {
 
   payload.authPin = getAuthPin();
 
-  payload.emergencySwitchMacs = getEmergencyMacPayloadList();
+  payload.emergencySources = getEmergencySourcePayloadList();
 
   return payload;
 }
@@ -617,7 +705,11 @@ function loadSettings() {
       }
       FIELD_IDS.forEach((id) => setFieldValue(id, data[id]));
       recalcVoltmeterCalibration();
-      applyEmergencyMacListFromServer(data.emergencySwitchMacs);
+      if (Array.isArray(data.emergencySources)) {
+        applyEmergencySourceListFromServer(data.emergencySources);
+      } else {
+        applyEmergencySourceListFromServer(data.emergencySwitchMacs);
+      }
       setStatus('Settings loaded', true);
     })
     .catch((err) => {
@@ -681,11 +773,25 @@ function exportSettings() {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.message || 'Export failed');
       }
-      return res.blob();
+      return res.text();
     })
-    .then((blob) => {
+    .then((rawText) => {
+      let exported = {};
+      try {
+        exported = JSON.parse(rawText || '{}');
+      } catch (err) {
+        throw new Error('Export payload is not valid JSON');
+      }
+
+      const now = new Date();
+      exported.exportedAt = getExportTimestampUtcIso(now);
+      if (Object.prototype.hasOwnProperty.call(exported, 'exportedAtMs')) {
+        delete exported.exportedAtMs;
+      }
+
+      const blob = new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
-      const stamp = getExportTimestampUtcCompact();
+      const stamp = getExportTimestampUtcCompact(now);
       const deviceName = getDeviceNameForExportFilename();
       const link = document.createElement('a');
       link.href = url;
@@ -710,14 +816,38 @@ function resetDefaultsSettings() {
     .then(async (res) => {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Restore defaults failed');
+      }
+      return data;
+    })
+    .then(() => {
+      setStoredAuthPin('');
+      setStatus('Defaults restored', true);
+      // Re-bootstrap so PIN gate reflects new defaults.
+      setTimeout(() => window.location.reload(), 300);
+    })
+    .catch((err) => {
+      setStatus(err.message, false);
+    });
+}
+
+function factoryResetSettings() {
+  fetch('/settings/factory-reset', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ authPin: getAuthPin() })
+  })
+    .then(async (res) => {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
         throw new Error(data.message || 'Factory reset failed');
       }
       return data;
     })
     .then(() => {
-      setStatus('Factory reset complete', true);
-      // Re-bootstrap so PIN gate reflects new defaults.
-      setTimeout(() => window.location.reload(), 300);
+      setStoredAuthPin('');
+      setStatus('Factory reset complete. Device rebooting...', true);
+      setTimeout(() => window.location.reload(), 1500);
     })
     .catch((err) => {
       setStatus(err.message, false);
@@ -805,6 +935,10 @@ document.addEventListener('DOMContentLoaded', () => {
   if (resetDefaultsBtn) {
     resetDefaultsBtn.addEventListener('click', resetDefaultsSettings);
   }
+  const factoryResetBtn = document.getElementById('factoryResetBtn');
+  if (factoryResetBtn) {
+    factoryResetBtn.addEventListener('click', factoryResetSettings);
+  }
   document.getElementById('exportBtn').addEventListener('click', exportSettings);
   document.getElementById('importBtn').addEventListener('click', () => {
     document.getElementById('importFile').click();
@@ -827,7 +961,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('voltageDividerR1').addEventListener('input', recalcVoltmeterCalibration);
   document.getElementById('voltageDividerR2').addEventListener('input', recalcVoltmeterCalibration);
 
-  initEmergencyMacWhitelistUi();
+  initEmergencySourceUi();
 
   const gateUnlockBtn = document.getElementById('settingsGateUnlockBtn');
   const gatePinInput = document.getElementById('settingsGatePinInput');

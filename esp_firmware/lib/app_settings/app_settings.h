@@ -13,6 +13,13 @@ struct EStopRouteConfig {
   bool switch_logic_inverted;
 };
 
+struct EmergencySourceConfig {
+  std::array<uint8_t, 6> mac;
+  bool control_group1_enabled;
+  bool control_group2_enabled;
+  bool control_group3_enabled;
+};
+
 struct AppSettings {
   String device_name;
 
@@ -24,14 +31,18 @@ struct AppSettings {
   bool runtime_led_enabled;
   bool runtime_sensor_enabled;
 
-  uint8_t chassis_switch_pin;
-  uint8_t mission_switch_pin;
-  uint8_t neg_pressure_switch_pin;
+  String control_group1_name;
+  String control_group2_name;
+  String control_group3_name;
 
-  uint8_t chassis_power_pin;
-  uint8_t mission_power_12v_pin;
-  uint8_t mission_power_7v4_pin;
-  uint8_t neg_pressure_power_pin;
+  uint8_t control_group1_switch_pin;
+  uint8_t control_group2_switch_pin;
+  uint8_t control_group3_switch_pin;
+
+  uint8_t control_group1_power_pin;
+  uint8_t control_group2_power_12v_pin;
+  uint8_t control_group2_power_7v4_pin;
+  uint8_t control_group3_power_pin;
 
   bool switch_active_high;
   bool power_active_high;
@@ -68,7 +79,7 @@ struct AppSettings {
   uint8_t estop_buzzer_pin;
   std::vector<EStopRouteConfig> estop_routes;
 
-  std::vector<std::array<uint8_t, 6>> emergency_switch_macs;
+  std::vector<EmergencySourceConfig> emergency_sources;
 
   /** Short-press target for status-page Control Panel FAB (path or http(s) URL). Default https://scx.tw/links. */
   String control_panel_url;
@@ -81,6 +92,7 @@ void appSettingsToJson(JsonDocument& doc, bool include_pin_code = false);
 bool updateAppSettingsFromJson(const JsonObjectConst& json, String& error);
 bool saveAppSettings();
 bool resetAppSettingsToDefaults();
+bool eraseAppSettingsFromNvs();
 
 bool verifySettingsPin(const String& pin);
 

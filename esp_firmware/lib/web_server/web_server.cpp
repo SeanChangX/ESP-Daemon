@@ -33,28 +33,25 @@ static bool parseBoolString(const String& value, bool& parsed) {
 }
 
 static bool parsePowerControlChannel(const String& key, PowerControlChannel& channel) {
-  String normalized = key;
-  normalized.toLowerCase();
-
-  if (normalized == "chassis" || normalized == "chassispower") {
-    channel = POWER_CHANNEL_CHASSIS;
+  if (key == "controlGroup1") {
+    channel = POWER_CHANNEL_GROUP1;
     return true;
   }
-  if (normalized == "mission" || normalized == "missionpower") {
-    channel = POWER_CHANNEL_MISSION;
+  if (key == "controlGroup2") {
+    channel = POWER_CHANNEL_GROUP2;
     return true;
   }
-  if (normalized == "negativepressure" || normalized == "negativepressurepower" || normalized == "negpressure") {
-    channel = POWER_CHANNEL_NEG_PRESSURE;
+  if (key == "controlGroup3") {
+    channel = POWER_CHANNEL_GROUP3;
     return true;
   }
   return false;
 }
 
 static void appendPowerState(JsonDocument& payload) {
-  payload["chassisPower"]          = getPowerControlState(POWER_CHANNEL_CHASSIS);
-  payload["missionPower"]          = getPowerControlState(POWER_CHANNEL_MISSION);
-  payload["negativePressurePower"] = getPowerControlState(POWER_CHANNEL_NEG_PRESSURE);
+  payload["controlGroup1Power"] = getPowerControlState(POWER_CHANNEL_GROUP1);
+  payload["controlGroup2Power"] = getPowerControlState(POWER_CHANNEL_GROUP2);
+  payload["controlGroup3Power"] = getPowerControlState(POWER_CHANNEL_GROUP3);
 }
 
 static String buildPowerResponse(bool success, const String& message) {
@@ -289,18 +286,8 @@ static bool validateStructuredSettingsPayload(const JsonObjectConst& src, String
     return false;
   }
   const int schemaVersion = src["schemaVersion"].as<int>();
-  if (schemaVersion != 2) {
-    error = "Unsupported schemaVersion (expected 2)";
-    return false;
-  }
-
-  if (!src["format"].is<const char*>()) {
-    error = "Unsupported import format: missing format";
-    return false;
-  }
-  const String format = String(src["format"].as<const char*>());
-  if (format != "structured") {
-    error = "Unsupported import format (expected structured)";
+  if (schemaVersion != 3) {
+    error = "Unsupported schemaVersion (expected 3)";
     return false;
   }
 
@@ -322,11 +309,9 @@ static void buildStructuredSettingsExportPayload(JsonDocument& payload) {
   const JsonObjectConst src = flat.as<JsonObjectConst>();
 
   payload["schema"]         = "esp-daemon.settings-export";
-  payload["schemaVersion"]  = 2;
-  payload["format"]         = "structured";
+  payload["schemaVersion"]  = 3;
   payload["generatedBy"]    = "esp-daemon";
   payload["fwVersion"]      = ESP_DAEMON_FW_VERSION;
-  payload["exportedAtMs"]   = millis();
 
   JsonObject device = payload["device"].to<JsonObject>();
   copyMappedKeyIfPresent(src, device, "deviceName", "name");
@@ -347,15 +332,20 @@ static void buildStructuredSettingsExportPayload(JsonDocument& payload) {
 
   JsonObject io = payload["io"].to<JsonObject>();
   JsonObject ioSwitches = io["switches"].to<JsonObject>();
-  copyMappedKeyIfPresent(src, ioSwitches, "chassisSwitchPin",     "chassisPin");
-  copyMappedKeyIfPresent(src, ioSwitches, "missionSwitchPin",     "missionPin");
-  copyMappedKeyIfPresent(src, ioSwitches, "negPressureSwitchPin", "negativePressurePin");
+  copyMappedKeyIfPresent(src, ioSwitches, "controlGroup1SwitchPin", "controlGroup1Pin");
+  copyMappedKeyIfPresent(src, ioSwitches, "controlGroup2SwitchPin", "controlGroup2Pin");
+  copyMappedKeyIfPresent(src, ioSwitches, "controlGroup3SwitchPin", "controlGroup3Pin");
 
   JsonObject ioPower = io["powerOutputs"].to<JsonObject>();
-  copyMappedKeyIfPresent(src, ioPower, "chassisPowerPin",     "chassisPin");
-  copyMappedKeyIfPresent(src, ioPower, "missionPower12vPin",  "mission12vPin");
-  copyMappedKeyIfPresent(src, ioPower, "missionPower7v4Pin",  "mission7v4Pin");
-  copyMappedKeyIfPresent(src, ioPower, "negPressurePowerPin", "negativePressurePin");
+  copyMappedKeyIfPresent(src, ioPower, "controlGroup1PowerPin",    "controlGroup1Pin");
+  copyMappedKeyIfPresent(src, ioPower, "controlGroup2Power12vPin", "controlGroup2Power12vPin");
+  copyMappedKeyIfPresent(src, ioPower, "controlGroup2Power7v4Pin", "controlGroup2Power7v4Pin");
+  copyMappedKeyIfPresent(src, ioPower, "controlGroup3PowerPin",    "controlGroup3Pin");
+
+  JsonObject ioGroups = io["groups"].to<JsonObject>();
+  copyMappedKeyIfPresent(src, ioGroups, "controlGroup1Name", "controlGroup1");
+  copyMappedKeyIfPresent(src, ioGroups, "controlGroup2Name", "controlGroup2");
+  copyMappedKeyIfPresent(src, ioGroups, "controlGroup3Name", "controlGroup3");
 
   JsonObject ioLogic = io["logic"].to<JsonObject>();
   copyKeyIfPresent(src, ioLogic, "switchActiveHigh");
@@ -380,7 +370,7 @@ static void buildStructuredSettingsExportPayload(JsonDocument& payload) {
 
   JsonObject network = payload["network"].to<JsonObject>();
   copyKeyIfPresent(src, network, "espNowChannel");
-  copyKeyIfPresent(src, network, "emergencySwitchMacs");
+  copyKeyIfPresent(src, network, "emergencySources");
 
   JsonObject estop = payload["estop"].to<JsonObject>();
   copyMappedKeyIfPresent(src, estop, "estopTargetMac",           "targetMac");
@@ -427,16 +417,22 @@ static void normalizeStructuredSettingsForImport(const JsonObjectConst& src, Jso
     const JsonObjectConst io = src["io"].as<JsonObjectConst>();
     if (io["switches"].is<JsonObjectConst>()) {
       const JsonObjectConst ioSwitches = io["switches"].as<JsonObjectConst>();
-      copyMappedKeyIfPresent(ioSwitches, dst, "chassisPin",          "chassisSwitchPin");
-      copyMappedKeyIfPresent(ioSwitches, dst, "missionPin",          "missionSwitchPin");
-      copyMappedKeyIfPresent(ioSwitches, dst, "negativePressurePin", "negPressureSwitchPin");
+      copyMappedKeyIfPresent(ioSwitches, dst, "controlGroup1Pin", "controlGroup1SwitchPin");
+      copyMappedKeyIfPresent(ioSwitches, dst, "controlGroup2Pin", "controlGroup2SwitchPin");
+      copyMappedKeyIfPresent(ioSwitches, dst, "controlGroup3Pin", "controlGroup3SwitchPin");
     }
     if (io["powerOutputs"].is<JsonObjectConst>()) {
       const JsonObjectConst ioPower = io["powerOutputs"].as<JsonObjectConst>();
-      copyMappedKeyIfPresent(ioPower, dst, "chassisPin",          "chassisPowerPin");
-      copyMappedKeyIfPresent(ioPower, dst, "mission12vPin",       "missionPower12vPin");
-      copyMappedKeyIfPresent(ioPower, dst, "mission7v4Pin",       "missionPower7v4Pin");
-      copyMappedKeyIfPresent(ioPower, dst, "negativePressurePin", "negPressurePowerPin");
+      copyMappedKeyIfPresent(ioPower, dst, "controlGroup1Pin",         "controlGroup1PowerPin");
+      copyMappedKeyIfPresent(ioPower, dst, "controlGroup2Power12vPin", "controlGroup2Power12vPin");
+      copyMappedKeyIfPresent(ioPower, dst, "controlGroup2Power7v4Pin", "controlGroup2Power7v4Pin");
+      copyMappedKeyIfPresent(ioPower, dst, "controlGroup3Pin",         "controlGroup3PowerPin");
+    }
+    if (io["groups"].is<JsonObjectConst>()) {
+      const JsonObjectConst ioGroups = io["groups"].as<JsonObjectConst>();
+      copyMappedKeyIfPresent(ioGroups, dst, "controlGroup1", "controlGroup1Name");
+      copyMappedKeyIfPresent(ioGroups, dst, "controlGroup2", "controlGroup2Name");
+      copyMappedKeyIfPresent(ioGroups, dst, "controlGroup3", "controlGroup3Name");
     }
     if (io["logic"].is<JsonObjectConst>()) {
       const JsonObjectConst ioLogic = io["logic"].as<JsonObjectConst>();
@@ -469,6 +465,7 @@ static void normalizeStructuredSettingsForImport(const JsonObjectConst& src, Jso
   if (src["network"].is<JsonObjectConst>()) {
     const JsonObjectConst network = src["network"].as<JsonObjectConst>();
     copyKeyIfPresent(network, dst, "espNowChannel");
+    copyKeyIfPresent(network, dst, "emergencySources");
     copyKeyIfPresent(network, dst, "emergencySwitchMacs");
   }
 
@@ -525,10 +522,10 @@ static void buildEStopSettingsResponsePayload(JsonDocument& payload, bool includ
   JsonArray routes = payload["estopRoutes"].to<JsonArray>();
   for (const auto& route : settings.estop_routes) {
     JsonObject routeObj = routes.add<JsonObject>();
-    routeObj["targetMac"] = route.target_mac;
-    routeObj["switchPin"] = route.switch_pin;
-    routeObj["switchActiveHigh"] = route.switch_active_high;
-    routeObj["switchLogicInverted"] = route.switch_logic_inverted;
+    routeObj["targetMac"]             = route.target_mac;
+    routeObj["switchPin"]             = route.switch_pin;
+    routeObj["switchActiveHigh"]      = route.switch_active_high;
+    routeObj["switchLogicInverted"]   = route.switch_logic_inverted;
   }
 }
 
@@ -602,24 +599,24 @@ static void handlePowerPost() {
     }
   }
 
-  if (server.hasArg("chassisPower")) {
+  if (server.hasArg("controlGroup1Power")) {
     bool enabled = false;
-    if (parseBoolString(server.arg("chassisPower"), enabled)) {
-      setPowerControlOverride(POWER_CHANNEL_CHASSIS, enabled);
+    if (parseBoolString(server.arg("controlGroup1Power"), enabled)) {
+      setPowerControlOverride(POWER_CHANNEL_GROUP1, enabled);
       updated = true;
     }
   }
-  if (server.hasArg("missionPower")) {
+  if (server.hasArg("controlGroup2Power")) {
     bool enabled = false;
-    if (parseBoolString(server.arg("missionPower"), enabled)) {
-      setPowerControlOverride(POWER_CHANNEL_MISSION, enabled);
+    if (parseBoolString(server.arg("controlGroup2Power"), enabled)) {
+      setPowerControlOverride(POWER_CHANNEL_GROUP2, enabled);
       updated = true;
     }
   }
-  if (server.hasArg("negativePressurePower")) {
+  if (server.hasArg("controlGroup3Power")) {
     bool enabled = false;
-    if (parseBoolString(server.arg("negativePressurePower"), enabled)) {
-      setPowerControlOverride(POWER_CHANNEL_NEG_PRESSURE, enabled);
+    if (parseBoolString(server.arg("controlGroup3Power"), enabled)) {
+      setPowerControlOverride(POWER_CHANNEL_GROUP3, enabled);
       updated = true;
     }
   }
@@ -633,16 +630,16 @@ static void handlePowerPost() {
           updated = true;
         }
       }
-      if (jsonObj["chassisPower"].is<bool>()) {
-        setPowerControlOverride(POWER_CHANNEL_CHASSIS, jsonObj["chassisPower"].as<bool>());
+      if (jsonObj["controlGroup1Power"].is<bool>()) {
+        setPowerControlOverride(POWER_CHANNEL_GROUP1, jsonObj["controlGroup1Power"].as<bool>());
         updated = true;
       }
-      if (jsonObj["missionPower"].is<bool>()) {
-        setPowerControlOverride(POWER_CHANNEL_MISSION, jsonObj["missionPower"].as<bool>());
+      if (jsonObj["controlGroup2Power"].is<bool>()) {
+        setPowerControlOverride(POWER_CHANNEL_GROUP2, jsonObj["controlGroup2Power"].as<bool>());
         updated = true;
       }
-      if (jsonObj["negativePressurePower"].is<bool>()) {
-        setPowerControlOverride(POWER_CHANNEL_NEG_PRESSURE, jsonObj["negativePressurePower"].as<bool>());
+      if (jsonObj["controlGroup3Power"].is<bool>()) {
+        setPowerControlOverride(POWER_CHANNEL_GROUP3, jsonObj["controlGroup3Power"].as<bool>());
         updated = true;
       }
     }
@@ -660,7 +657,7 @@ static void handleEmergencyPost() {
   bool emergency = false;
 
   if (server.hasArg("emergency") && parseBoolString(server.arg("emergency"), emergency)) {
-    setPowerControlOverride(POWER_CHANNEL_CHASSIS, emergency);
+    setPowerControlOverride(POWER_CHANNEL_GROUP1, emergency);
     updated = true;
   }
 
@@ -668,13 +665,13 @@ static void handleEmergencyPost() {
     JsonDocument jsonObj;
     DeserializationError error = deserializeJson(jsonObj, server.arg("plain"));
     if (!error && jsonObj["emergency"].is<bool>()) {
-      setPowerControlOverride(POWER_CHANNEL_CHASSIS, jsonObj["emergency"].as<bool>());
+      setPowerControlOverride(POWER_CHANNEL_GROUP1, jsonObj["emergency"].as<bool>());
       updated = true;
     }
   }
 
   if (updated) {
-    server.send(200, "application/json", buildPowerResponse(true, "Chassis power updated"));
+    server.send(200, "application/json", buildPowerResponse(true, "Control Group 1 power updated"));
   } else {
     server.send(400, "application/json", buildPowerResponse(false, "Invalid emergency payload"));
   }
@@ -806,7 +803,7 @@ static void handleSettingsUnlockPost() {
   server.send(403, "application/json", buildSettingsResponse(false, "Invalid PIN"));
 }
 
-static void handleSettingsResetPost() {
+static void handleSettingsRestoreDefaultsPost() {
   JsonDocument jsonObj;
   String parseError;
   if (!parseJsonBody(jsonObj, parseError)) {
@@ -830,7 +827,36 @@ static void handleSettingsResetPost() {
     initLED();
   }
 
-  server.send(200, "application/json", buildSettingsResponse(true, "Settings reset to defaults"));
+  server.send(200, "application/json", buildSettingsResponse(true, "Settings restored to defaults"));
+}
+
+static void handleSettingsFactoryResetPost() {
+  JsonDocument jsonObj;
+  String parseError;
+  if (!parseJsonBody(jsonObj, parseError)) {
+    server.send(400, "application/json", buildSettingsResponse(false, parseError));
+    return;
+  }
+
+  if (!authorizeSettingsRequest(jsonObj.as<JsonObjectConst>())) {
+    server.send(403, "application/json", buildSettingsResponse(false, "Invalid PIN"));
+    return;
+  }
+
+  if (!eraseAppSettingsFromNvs()) {
+    server.send(400, "application/json", buildSettingsResponse(false, "Failed to erase NVS settings"));
+    return;
+  }
+
+  refreshNetworkIdentity();
+  refreshESPNowChannel();
+  if (getAppSettings().runtime_led_enabled) {
+    initLED();
+  }
+
+  server.send(200, "application/json", buildSettingsResponse(true, "Factory reset complete (full NVS erased), rebooting..."));
+  delay(50);
+  ESP.restart();
 }
 
 static void handleEspRebootPost() {
@@ -904,12 +930,14 @@ void initWebServer() {
   server.on("/settings/import", HTTP_GET, redirectToRoot);
   server.on("/settings/unlock", HTTP_GET, redirectToRoot);
   server.on("/settings/reset", HTTP_GET, redirectToRoot);
+  server.on("/settings/factory-reset", HTTP_GET, redirectToRoot);
   server.on("/settings/read", HTTP_POST, handleSettingsReadPost);
   server.on("/settings", HTTP_POST, handleSettingsPost);
   server.on("/settings/export", HTTP_POST, handleSettingsExportPost);
   server.on("/settings/import", HTTP_POST, handleSettingsImportPost);
   server.on("/settings/unlock", HTTP_POST, handleSettingsUnlockPost);
-  server.on("/settings/reset", HTTP_POST, handleSettingsResetPost);
+  server.on("/settings/reset", HTTP_POST, handleSettingsRestoreDefaultsPost);
+  server.on("/settings/factory-reset", HTTP_POST, handleSettingsFactoryResetPost);
 #endif
   server.on("/esp/reboot", HTTP_GET, redirectToRoot);
   server.on("/esp/reboot", HTTP_POST, handleEspRebootPost);

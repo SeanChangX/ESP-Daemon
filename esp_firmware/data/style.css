@@ -10,7 +10,7 @@
   --text-color: #ffffff;
   --background-color: #000000;
   --card-background: #1c1c1e;
-  --card-shadow: 0 4px 24px rgba(0, 0, 0, 0.55);
+  --card-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
   --card-title-color: #ffffff;
   --muted-text-color: rgba(235, 235, 245, 0.6);
   --border-color: rgba(255, 255, 255, 0.09);
@@ -378,7 +378,7 @@ textarea:focus-visible {
 
 .card:hover,
 .settings-card:hover {
-  transform: translateY(-1px);
+  transform: none;
 }
 
 /* Card components — large title + hairline separator (Settings-style) */
@@ -911,6 +911,62 @@ textarea:focus-visible {
   min-width: 0;
 }
 
+.control-groups-layout {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.72rem;
+  margin-top: 0.12rem;
+}
+
+.control-group-block {
+  min-width: 0;
+  border: 1px solid var(--apple-separator);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 0.62rem 0.66rem 0.34rem;
+}
+
+.light-mode .control-group-block {
+  background: rgba(0, 0, 0, 0.018);
+}
+
+.control-group-block__title {
+  margin: 0 0 0.55rem;
+  padding: 0 0 0.42rem;
+  border-bottom: 1px solid var(--apple-separator);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted-text-color);
+}
+
+.control-group-block .field {
+  margin-bottom: 0.55rem;
+}
+
+.control-group-block .field:last-child {
+  margin-bottom: 0.4rem;
+}
+
+.control-group-block--logic {
+  grid-column: 1 / -1;
+}
+
+.control-group-block--logic .settings-toggle-stack {
+  margin: 0.02rem 0 0.08rem;
+  gap: 0.48rem;
+}
+
+.control-group-block--logic .settings-switch-row {
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.light-mode .control-group-block--logic .settings-switch-row {
+  background: rgba(0, 0, 0, 0.03);
+}
+
 .mac-whitelist-add__row {
   display: flex;
   flex-wrap: wrap;
@@ -927,6 +983,125 @@ textarea:focus-visible {
 .mac-whitelist-add__row .btn {
   flex: 0 0 auto;
   align-self: stretch;
+}
+
+.mac-whitelist-targets {
+  margin-top: 0.56rem;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.44rem;
+  font-size: 0.82rem;
+  color: var(--subtext-color);
+}
+
+.mac-whitelist-targets__label {
+  font-weight: 700;
+  color: var(--text-color);
+}
+
+.mac-whitelist-targets__pills {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.48rem;
+}
+
+.target-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.38rem;
+  min-width: 0;
+  min-height: 2rem;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted-text-color);
+  font-weight: 600;
+  font-size: 0.88rem;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+  padding: 0 0.58rem;
+}
+
+.target-pill:hover {
+  border-color: rgba(255, 255, 255, 0.26);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-color);
+}
+
+.target-pill input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+  white-space: nowrap;
+}
+
+.target-pill__check {
+  width: 0.98rem;
+  height: 0.98rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  background: rgba(255, 255, 255, 0.02);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+}
+
+.target-pill input:checked + .target-pill__check {
+  border-color: rgba(255, 84, 76, 0.82);
+  background: rgba(255, 84, 76, 0.92);
+  box-shadow: 0 0 0 2px rgba(255, 84, 76, 0.11);
+}
+
+.target-pill input:checked + .target-pill__check + .target-pill__text {
+  color: var(--text-color);
+}
+
+.target-pill input:focus-visible + .target-pill__check {
+  box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.45);
+}
+
+.target-pill__text {
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.light-mode .target-pill {
+  border-color: rgba(0, 0, 0, 0.14);
+  background: rgba(0, 0, 0, 0.018);
+  color: #62666f;
+}
+
+.light-mode .target-pill:hover {
+  border-color: rgba(0, 0, 0, 0.2);
+  background: rgba(0, 0, 0, 0.04);
+  color: #171b20;
+}
+
+.light-mode .target-pill__check {
+  border-color: rgba(0, 0, 0, 0.22);
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.light-mode .target-pill input:checked + .target-pill__check {
+  border-color: rgba(255, 59, 48, 0.82);
+  background: rgba(255, 59, 48, 0.92);
+  box-shadow: 0 0 0 2px rgba(255, 59, 48, 0.12);
+}
+
+.light-mode .target-pill input:focus-visible + .target-pill__check {
+  box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.28);
 }
 
 .mac-whitelist-err {
@@ -970,6 +1145,19 @@ textarea:focus-visible {
   color: var(--text-color);
   word-break: break-all;
   text-transform: uppercase;
+}
+
+.mac-whitelist-list__meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.mac-whitelist-list__targets {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--subtext-color);
 }
 
 .mac-whitelist-remove {

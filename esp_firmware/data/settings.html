@@ -67,19 +67,39 @@
         </div>
 
         <div class="settings-card">
-          <h3>E-Stop MAC Whitelist</h3>
+          <h3>E-Stop Emergency Sources</h3>
           <div class="field">
             <label>ESP-NOW Channel (1-13, default 6)</label>
             <input id="espNowChannel" type="number" min="1" max="13">
           </div>
           <div class="field mac-whitelist-field">
-            <label for="emergencyMacInput">MAC address</label>
+            <label for="emergencySourceInput">Source MAC address</label>
             <div class="mac-whitelist-add__row">
-              <input id="emergencyMacInput" type="text" inputmode="text" autocomplete="off" placeholder="AA-BB-CC-DD-EE-FF" maxlength="17" spellcheck="false">
-              <button type="button" class="btn" id="emergencyMacAddBtn">ADD</button>
+              <input id="emergencySourceInput" type="text" inputmode="text" autocomplete="off" placeholder="AA-BB-CC-DD-EE-FF" maxlength="17" spellcheck="false">
+              <button type="button" class="btn" id="emergencySourceAddBtn">ADD</button>
             </div>
-            <p id="emergencyMacError" class="mac-whitelist-err" role="alert"></p>
-            <ul id="emergencyMacList" class="mac-whitelist-list" aria-label="Whitelisted MAC addresses"></ul>
+            <div class="mac-whitelist-targets">
+              <span class="mac-whitelist-targets__label">Targets (control groups)</span>
+              <div class="mac-whitelist-targets__pills">
+                <label class="target-pill">
+                  <input id="emergencySourceGroup1" type="checkbox" checked>
+                  <span class="target-pill__check" aria-hidden="true"></span>
+                  <span class="target-pill__text">Group 1</span>
+                </label>
+                <label class="target-pill">
+                  <input id="emergencySourceGroup2" type="checkbox">
+                  <span class="target-pill__check" aria-hidden="true"></span>
+                  <span class="target-pill__text">Group 2</span>
+                </label>
+                <label class="target-pill">
+                  <input id="emergencySourceGroup3" type="checkbox">
+                  <span class="target-pill__check" aria-hidden="true"></span>
+                  <span class="target-pill__text">Group 3</span>
+                </label>
+              </div>
+            </div>
+            <p id="emergencySourceError" class="mac-whitelist-err" role="alert"></p>
+            <ul id="emergencySourceList" class="mac-whitelist-list" aria-label="Emergency source MAC addresses"></ul>
           </div>
         </div>
         </div>
@@ -121,39 +141,59 @@
 
         <div class="settings-card">
           <h3>GPIO & Logic</h3>
-          <div class="field"><label>Chassis Switch Pin</label><input id="chassisSwitchPin" type="number" min="0" max="48"></div>
-          <div class="field"><label>Mission Switch Pin</label><input id="missionSwitchPin" type="number" min="0" max="48"></div>
-          <div class="field"><label>Neg Pressure Switch Pin</label><input id="negPressureSwitchPin" type="number" min="0" max="48"></div>
-          <div class="field"><label>Chassis Power Pin</label><input id="chassisPowerPin" type="number" min="0" max="48"></div>
-          <div class="field"><label>Mission Power 12V Pin</label><input id="missionPower12vPin" type="number" min="0" max="48"></div>
-          <div class="field"><label>Mission Power 7.4V Pin</label><input id="missionPower7v4Pin" type="number" min="0" max="48"></div>
-          <div class="field"><label>Neg Pressure Power Pin</label><input id="negPressurePowerPin" type="number" min="0" max="48"></div>
-          <div class="settings-toggle-stack">
-            <div class="settings-switch-row">
-              <label class="settings-switch-label" for="switchActiveHigh">Switch active when HIGH</label>
-              <label class="switch-control">
-                <input id="switchActiveHigh" type="checkbox">
-                <span class="switch-slider"></span>
-              </label>
-            </div>
-            <div class="settings-switch-row">
-              <label class="settings-switch-label" for="powerActiveHigh">Power output active when HIGH</label>
-              <label class="switch-control">
-                <input id="powerActiveHigh" type="checkbox">
-                <span class="switch-slider"></span>
-              </label>
-            </div>
+          <div class="control-groups-layout">
+            <section class="control-group-block" aria-labelledby="controlGroup1BlockTitle">
+              <h4 class="control-group-block__title" id="controlGroup1BlockTitle">Control Group 1</h4>
+              <div class="field"><label>Name</label><input id="controlGroup1Name" type="text" maxlength="32" placeholder="Chassis Power"></div>
+              <div class="field"><label>Switch Pin (GPIO)</label><input id="controlGroup1SwitchPin" type="number" min="0" max="48"></div>
+              <div class="field"><label>Power Pin (GPIO)</label><input id="controlGroup1PowerPin" type="number" min="0" max="48"></div>
+            </section>
+
+            <section class="control-group-block" aria-labelledby="controlGroup2BlockTitle">
+              <h4 class="control-group-block__title" id="controlGroup2BlockTitle">Control Group 2</h4>
+              <div class="field"><label>Name</label><input id="controlGroup2Name" type="text" maxlength="32" placeholder="Actuators Power"></div>
+              <div class="field"><label>Switch Pin (GPIO)</label><input id="controlGroup2SwitchPin" type="number" min="0" max="48"></div>
+              <div class="field"><label>Power 12V Pin (GPIO)</label><input id="controlGroup2Power12vPin" type="number" min="0" max="48"></div>
+              <div class="field"><label>Power 7.4V Pin (GPIO)</label><input id="controlGroup2Power7v4Pin" type="number" min="0" max="48"></div>
+            </section>
+
+            <section class="control-group-block" aria-labelledby="controlGroup3BlockTitle">
+              <h4 class="control-group-block__title" id="controlGroup3BlockTitle">Control Group 3</h4>
+              <div class="field"><label>Name</label><input id="controlGroup3Name" type="text" maxlength="32" placeholder="Others Power"></div>
+              <div class="field"><label>Switch Pin (GPIO)</label><input id="controlGroup3SwitchPin" type="number" min="0" max="48"></div>
+              <div class="field"><label>Power Pin (GPIO)</label><input id="controlGroup3PowerPin" type="number" min="0" max="48"></div>
+            </section>
+
+            <section class="control-group-block control-group-block--logic" aria-labelledby="controlLogicTitle">
+              <h4 class="control-group-block__title" id="controlLogicTitle">I/O Logic</h4>
+              <div class="settings-toggle-stack settings-toggle-stack--compact">
+                <div class="settings-switch-row">
+                  <label class="settings-switch-label" for="switchActiveHigh">Switch active when HIGH</label>
+                  <label class="switch-control">
+                    <input id="switchActiveHigh" type="checkbox">
+                    <span class="switch-slider"></span>
+                  </label>
+                </div>
+                <div class="settings-switch-row">
+                  <label class="settings-switch-label" for="powerActiveHigh">Power output active when HIGH</label>
+                  <label class="switch-control">
+                    <input id="powerActiveHigh" type="checkbox">
+                    <span class="switch-slider"></span>
+                  </label>
+                </div>
+              </div>
+            </section>
           </div>
         </div>
 
         <div class="settings-card">
           <h3>Voltmeter</h3>
-          <div class="field"><label>Voltmeter Pin</label><input id="voltmeterPin" type="number" min="0" max="48"></div>
-          <div class="field"><label>Divider R1</label><input id="voltageDividerR1" type="number" step="0.01" min="0"></div>
-          <div class="field"><label>Divider R2</label><input id="voltageDividerR2" type="number" step="0.01" min="0.0001"></div>
-          <div class="field"><label>Calibration (auto from R1/R2)</label><input id="voltmeterCalibration" type="number" step="0.0001" readonly></div>
-          <div class="field"><label>Offset</label><input id="voltmeterOffset" type="number" step="0.01"></div>
-          <div class="field"><label>Sliding Window Size</label><input id="slidingWindowSize" type="number" min="1"></div>
+          <div class="field"><label>Voltmeter Pin (GPIO)</label><input id="voltmeterPin" type="number" min="0" max="48"></div>
+          <div class="field"><label>Divider R1 (ohm)</label><input id="voltageDividerR1" type="number" step="0.01" min="0"></div>
+          <div class="field"><label>Divider R2 (ohm)</label><input id="voltageDividerR2" type="number" step="0.01" min="0.0001"></div>
+          <div class="field"><label>Calibration (x, auto from R1/R2)</label><input id="voltmeterCalibration" type="number" step="0.0001" readonly></div>
+          <div class="field"><label>Offset (V)</label><input id="voltmeterOffset" type="number" step="0.01"></div>
+          <div class="field"><label>Sliding Window Size (samples)</label><input id="slidingWindowSize" type="number" min="1"></div>
           <div class="field"><label>Timer Period (us)</label><input id="timerPeriodUs" type="number" min="1000"></div>
           <div class="field"><label>Battery Disconnect Threshold (V)</label><input id="batteryDisconnectThreshold" type="number" step="0.01"></div>
           <div class="field"><label>Battery Low Threshold (V)</label><input id="batteryLowThreshold" type="number" step="0.01"></div>
@@ -179,6 +219,16 @@
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M21 12a9 9 0 1 1-3-6.7"></path>
                 <path d="M21 3v6h-6"></path>
+              </svg>
+            </span>
+            <span class="btn-action-text">RESTORE DEFAULTS</span>
+          </button>
+          <button type="button" class="btn actions__btn actions__btn--narrow" id="factoryResetBtn">
+            <span class="btn-action-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 6h18"></path>
+                <path d="M8 6V4h8v2"></path>
+                <path d="M19 6l-1 14H6L5 6"></path>
               </svg>
             </span>
             <span class="btn-action-text">FACTORY RESET</span>

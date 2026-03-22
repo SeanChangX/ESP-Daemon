@@ -12,14 +12,14 @@
 // micro-ROS essential components
 rcl_publisher_t                  counter_publisher;
 rcl_publisher_t          battery_voltage_publisher;
-rcl_subscription_t        chassis_enable_subscriber;
-rcl_subscription_t        mission_enable_subscriber;
-rcl_subscription_t   neg_pressure_enable_subscriber;
+rcl_subscription_t       control_group1_enable_subscriber;
+rcl_subscription_t       control_group2_enable_subscriber;
+rcl_subscription_t       control_group3_enable_subscriber;
 std_msgs__msg__Int32             counter_msg;
 std_msgs__msg__Float32   battery_voltage_msg;
-std_msgs__msg__Bool       chassis_enable_msg;
-std_msgs__msg__Bool       mission_enable_msg;
-std_msgs__msg__Bool  neg_pressure_enable_msg;
+std_msgs__msg__Bool      control_group1_enable_msg;
+std_msgs__msg__Bool      control_group2_enable_msg;
+std_msgs__msg__Bool      control_group3_enable_msg;
 
 rclc_executor_t executor;
 rcl_allocator_t allocator;
@@ -40,14 +40,14 @@ AgentState state = AGENT_DISCONNECTED;
 // Physical switch edge returns that rail to FollowPhysical (local operator regains sole control).
 enum class RemoteRailMode : uint8_t { FollowPhysical = 0, RemoteForceOn = 1, RemoteForceOff = 2 };
 
-static volatile RemoteRailMode chassis_remote_mode = RemoteRailMode::FollowPhysical;
-static volatile RemoteRailMode mission_remote_mode = RemoteRailMode::FollowPhysical;
-static volatile RemoteRailMode neg_pressure_remote_mode = RemoteRailMode::FollowPhysical;
-static volatile bool chassis_remote_emergency_latched = false;
+static volatile RemoteRailMode control_group1_remote_mode = RemoteRailMode::FollowPhysical;
+static volatile RemoteRailMode control_group2_remote_mode = RemoteRailMode::FollowPhysical;
+static volatile RemoteRailMode control_group3_remote_mode = RemoteRailMode::FollowPhysical;
+static volatile bool control_group1_remote_emergency_latched = false;
 
-static volatile bool chassis_power_enabled = false;
-static volatile bool mission_power_enabled = false;
-static volatile bool neg_pressure_power_enabled = false;
+static volatile bool control_group1_power_enabled = false;
+static volatile bool control_group2_power_enabled = false;
+static volatile bool control_group3_power_enabled = false;
 
 #if ENABLE_MICROROS
 #define RCCHECK(fn)        { rcl_ret_t temp_rc = fn; if ((temp_rc != RCL_RET_OK)) { error_loop(); } }
@@ -64,14 +64,14 @@ static bool isSwitchEnabled(uint8_t pin) {
 static uint8_t getSwitchPinForChannel(PowerControlChannel channel) {
   const AppSettings& settings = getAppSettings();
   switch (channel) {
-    case POWER_CHANNEL_CHASSIS:
-      return settings.chassis_switch_pin;
-    case POWER_CHANNEL_MISSION:
-      return settings.mission_switch_pin;
-    case POWER_CHANNEL_NEG_PRESSURE:
-      return settings.neg_pressure_switch_pin;
+    case POWER_CHANNEL_GROUP1:
+      return settings.control_group1_switch_pin;
+    case POWER_CHANNEL_GROUP2:
+      return settings.control_group2_switch_pin;
+    case POWER_CHANNEL_GROUP3:
+      return settings.control_group3_switch_pin;
     default:
-      return settings.chassis_switch_pin;
+      return settings.control_group1_switch_pin;
   }
 }
 
@@ -80,108 +80,108 @@ static void setOutputPower(uint8_t pin, bool enabled) {
   digitalWrite(pin, enabled ? (powerActiveHigh ? HIGH : LOW) : (powerActiveHigh ? LOW : HIGH));
 }
 
-static void applyPowerOutputs(bool chassis_enabled, bool mission_enabled, bool neg_pressure_enabled) {
+static void applyPowerOutputs(bool group1_enabled, bool group2_enabled, bool group3_enabled) {
   const AppSettings& settings = getAppSettings();
-  setOutputPower(settings.chassis_power_pin,           chassis_enabled);
-  setOutputPower(settings.mission_power_12v_pin,       mission_enabled);
-  setOutputPower(settings.mission_power_7v4_pin,       mission_enabled);
-  setOutputPower(settings.neg_pressure_power_pin, neg_pressure_enabled);
+  setOutputPower(settings.control_group1_power_pin,           group1_enabled);
+  setOutputPower(settings.control_group2_power_12v_pin,       group2_enabled);
+  setOutputPower(settings.control_group2_power_7v4_pin,       group2_enabled);
+  setOutputPower(settings.control_group3_power_pin,           group3_enabled);
 }
 
 static void refreshPowerControlState() {
   static bool has_prev_switch_sample = false;
-  static bool prev_chassis_switch = false;
-  static bool prev_mission_switch = false;
-  static bool prev_neg_pressure_switch = false;
+  static bool prev_group1_switch = false;
+  static bool prev_group2_switch = false;
+  static bool prev_group3_switch = false;
 
   const AppSettings& settings = getAppSettings();
-  const bool new_chassis_switch = isSwitchEnabled(settings.chassis_switch_pin);
-  const bool new_mission_switch = isSwitchEnabled(settings.mission_switch_pin);
-  const bool new_neg_pressure_switch = isSwitchEnabled(settings.neg_pressure_switch_pin);
+  const bool new_group1_switch = isSwitchEnabled(settings.control_group1_switch_pin);
+  const bool new_group2_switch = isSwitchEnabled(settings.control_group2_switch_pin);
+  const bool new_group3_switch = isSwitchEnabled(settings.control_group3_switch_pin);
 
-  const bool chassis_switch_changed = has_prev_switch_sample && (new_chassis_switch != prev_chassis_switch);
-  const bool mission_switch_changed = has_prev_switch_sample && (new_mission_switch != prev_mission_switch);
-  const bool neg_pressure_switch_changed = has_prev_switch_sample && (new_neg_pressure_switch != prev_neg_pressure_switch);
+  const bool group1_switch_changed = has_prev_switch_sample && (new_group1_switch != prev_group1_switch);
+  const bool group2_switch_changed = has_prev_switch_sample && (new_group2_switch != prev_group2_switch);
+  const bool group3_switch_changed = has_prev_switch_sample && (new_group3_switch != prev_group3_switch);
 
-  // Physical switch change: return to local-only control and clear chassis emergency latch.
-  if (chassis_switch_changed) {
-    chassis_remote_mode = RemoteRailMode::FollowPhysical;
-    chassis_remote_emergency_latched = false;
+  // Physical switch change: return to local-only control and clear group1 emergency latch.
+  if (group1_switch_changed) {
+    control_group1_remote_mode = RemoteRailMode::FollowPhysical;
+    control_group1_remote_emergency_latched = false;
   }
-  if (mission_switch_changed) {
-    mission_remote_mode = RemoteRailMode::FollowPhysical;
+  if (group2_switch_changed) {
+    control_group2_remote_mode = RemoteRailMode::FollowPhysical;
   }
-  if (neg_pressure_switch_changed) {
-    neg_pressure_remote_mode = RemoteRailMode::FollowPhysical;
+  if (group3_switch_changed) {
+    control_group3_remote_mode = RemoteRailMode::FollowPhysical;
   }
 
-  bool new_chassis_power = false;
-  if (chassis_remote_emergency_latched) {
-    new_chassis_power = false;
+  bool new_group1_power = false;
+  if (control_group1_remote_emergency_latched) {
+    new_group1_power = false;
   } else {
-    switch (chassis_remote_mode) {
+    switch (control_group1_remote_mode) {
       case RemoteRailMode::RemoteForceOff:
-        new_chassis_power = false;
+        new_group1_power = false;
         break;
       case RemoteRailMode::RemoteForceOn:
-        new_chassis_power = true;
+        new_group1_power = true;
         break;
       case RemoteRailMode::FollowPhysical:
       default:
-        new_chassis_power = new_chassis_switch;
+        new_group1_power = new_group1_switch;
         break;
     }
   }
 
-  bool new_mission_power = false;
-  switch (mission_remote_mode) {
+  bool new_group2_power = false;
+  switch (control_group2_remote_mode) {
     case RemoteRailMode::RemoteForceOff:
-      new_mission_power = false;
+      new_group2_power = false;
       break;
     case RemoteRailMode::RemoteForceOn:
-      new_mission_power = true;
+      new_group2_power = true;
       break;
     case RemoteRailMode::FollowPhysical:
     default:
-      new_mission_power = new_mission_switch;
+      new_group2_power = new_group2_switch;
       break;
   }
 
-  bool new_neg_pressure_power = false;
-  switch (neg_pressure_remote_mode) {
+  bool new_group3_power = false;
+  switch (control_group3_remote_mode) {
     case RemoteRailMode::RemoteForceOff:
-      new_neg_pressure_power = false;
+      new_group3_power = false;
       break;
     case RemoteRailMode::RemoteForceOn:
-      new_neg_pressure_power = true;
+      new_group3_power = true;
       break;
     case RemoteRailMode::FollowPhysical:
     default:
-      new_neg_pressure_power = new_neg_pressure_switch;
+      new_group3_power = new_group3_switch;
       break;
   }
 
-  const bool chassis_changed = (new_chassis_power != chassis_power_enabled);
-  const bool mission_changed = (new_mission_power != mission_power_enabled);
-  const bool neg_pressure_changed = (new_neg_pressure_power != neg_pressure_power_enabled);
+  const bool group1_changed = (new_group1_power != control_group1_power_enabled);
+  const bool group2_changed = (new_group2_power != control_group2_power_enabled);
+  const bool group3_changed = (new_group3_power != control_group3_power_enabled);
 
-  if (chassis_changed || mission_changed || neg_pressure_changed) {
-    applyPowerOutputs(new_chassis_power, new_mission_power, new_neg_pressure_power);
+  if (group1_changed || group2_changed || group3_changed) {
+    applyPowerOutputs(new_group1_power, new_group2_power, new_group3_power);
   }
 
-  prev_chassis_switch = new_chassis_switch;
-  prev_mission_switch = new_mission_switch;
-  prev_neg_pressure_switch = new_neg_pressure_switch;
+  prev_group1_switch = new_group1_switch;
+  prev_group2_switch = new_group2_switch;
+  prev_group3_switch = new_group3_switch;
   has_prev_switch_sample = true;
 
-  if (chassis_changed) {
-    mode = new_chassis_power ? EME_ENABLE : EME_DISABLE;
+  if (group1_changed) {
+    mode = new_group1_power ? EME_ENABLE : EME_DISABLE;
     last_override_time = millis();
   }
 
-  chassis_power_enabled = new_chassis_power;
-  mission_power_enabled = new_mission_power;
-  neg_pressure_power_enabled = new_neg_pressure_power;
+  control_group1_power_enabled = new_group1_power;
+  control_group2_power_enabled = new_group2_power;
+  control_group3_power_enabled = new_group3_power;
 }
 
 #if ENABLE_MICROROS
@@ -195,19 +195,19 @@ void timer_callback(rcl_timer_t* timer, int64_t last_call_time) {
   }
 }
 
-void chassis_enable_callback(const void* msgin) {
+void control_group1_enable_callback(const void* msgin) {
   const std_msgs__msg__Bool* incoming = (const std_msgs__msg__Bool*)msgin;
-  setPowerControlOverride(POWER_CHANNEL_CHASSIS, incoming->data);
+  setPowerControlOverride(POWER_CHANNEL_GROUP1, incoming->data);
 }
 
-void mission_enable_callback(const void* msgin) {
+void control_group2_enable_callback(const void* msgin) {
   const std_msgs__msg__Bool* incoming = (const std_msgs__msg__Bool*)msgin;
-  setPowerControlOverride(POWER_CHANNEL_MISSION, incoming->data);
+  setPowerControlOverride(POWER_CHANNEL_GROUP2, incoming->data);
 }
 
-void neg_pressure_enable_callback(const void* msgin) {
+void control_group3_enable_callback(const void* msgin) {
   const std_msgs__msg__Bool* incoming = (const std_msgs__msg__Bool*)msgin;
-  setPowerControlOverride(POWER_CHANNEL_NEG_PRESSURE, incoming->data);
+  setPowerControlOverride(POWER_CHANNEL_GROUP3, incoming->data);
 }
 #endif
 
@@ -217,19 +217,19 @@ void updatePowerControls() {
 
 void setPowerControlOverride(PowerControlChannel channel, bool enabled) {
   switch (channel) {
-    case POWER_CHANNEL_CHASSIS:
+    case POWER_CHANNEL_GROUP1:
       if (enabled) {
-        chassis_remote_emergency_latched = false;
-        chassis_remote_mode = RemoteRailMode::RemoteForceOn;
+        control_group1_remote_emergency_latched = false;
+        control_group1_remote_mode = RemoteRailMode::RemoteForceOn;
       } else {
-        chassis_remote_mode = RemoteRailMode::RemoteForceOff;
+        control_group1_remote_mode = RemoteRailMode::RemoteForceOff;
       }
       break;
-    case POWER_CHANNEL_MISSION:
-      mission_remote_mode = enabled ? RemoteRailMode::RemoteForceOn : RemoteRailMode::RemoteForceOff;
+    case POWER_CHANNEL_GROUP2:
+      control_group2_remote_mode = enabled ? RemoteRailMode::RemoteForceOn : RemoteRailMode::RemoteForceOff;
       break;
-    case POWER_CHANNEL_NEG_PRESSURE:
-      neg_pressure_remote_mode = enabled ? RemoteRailMode::RemoteForceOn : RemoteRailMode::RemoteForceOff;
+    case POWER_CHANNEL_GROUP3:
+      control_group3_remote_mode = enabled ? RemoteRailMode::RemoteForceOn : RemoteRailMode::RemoteForceOff;
       break;
     default:
       return;
@@ -238,21 +238,34 @@ void setPowerControlOverride(PowerControlChannel channel, bool enabled) {
   refreshPowerControlState();
 }
 
-void triggerRemoteEmergencyStop() {
-  // ESP-NOW stop: latch chassis off until web enable or physical chassis switch toggle.
-  chassis_remote_emergency_latched = true;
-  chassis_remote_mode = RemoteRailMode::FollowPhysical;
+void triggerRemoteEmergencyStop(bool target_group1, bool target_group2, bool target_group3) {
+  if (!target_group1 && !target_group2 && !target_group3) {
+    return;
+  }
+
+  // ESP-NOW emergency: selected groups are forced off.
+  // Group1 keeps dedicated emergency latch semantics.
+  if (target_group1) {
+    control_group1_remote_emergency_latched = true;
+    control_group1_remote_mode = RemoteRailMode::FollowPhysical;
+  }
+  if (target_group2) {
+    control_group2_remote_mode = RemoteRailMode::RemoteForceOff;
+  }
+  if (target_group3) {
+    control_group3_remote_mode = RemoteRailMode::RemoteForceOff;
+  }
   refreshPowerControlState();
 }
 
 bool getPowerControlState(PowerControlChannel channel) {
   switch (channel) {
-    case POWER_CHANNEL_CHASSIS:
-      return chassis_power_enabled;
-    case POWER_CHANNEL_MISSION:
-      return mission_power_enabled;
-    case POWER_CHANNEL_NEG_PRESSURE:
-      return neg_pressure_power_enabled;
+    case POWER_CHANNEL_GROUP1:
+      return control_group1_power_enabled;
+    case POWER_CHANNEL_GROUP2:
+      return control_group2_power_enabled;
+    case POWER_CHANNEL_GROUP3:
+      return control_group3_power_enabled;
     default:
       return false;
   }
@@ -280,9 +293,9 @@ void destroy_entities() {
 
   rcl_publisher_fini(&counter_publisher, &node);
   rcl_publisher_fini(&battery_voltage_publisher, &node);
-  rcl_subscription_fini(&chassis_enable_subscriber, &node);
-  rcl_subscription_fini(&mission_enable_subscriber, &node);
-  rcl_subscription_fini(&neg_pressure_enable_subscriber, &node);
+  rcl_subscription_fini(&control_group1_enable_subscriber, &node);
+  rcl_subscription_fini(&control_group2_enable_subscriber, &node);
+  rcl_subscription_fini(&control_group3_enable_subscriber, &node);
 }
 
 bool create_entities() {
@@ -316,25 +329,25 @@ bool create_entities() {
   rclc_executor_add_timer(&executor, &timer);
 
   rclc_subscription_init_default(
-    &chassis_enable_subscriber,
+    &control_group1_enable_subscriber,
     &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool),
-    "/robot_status/chassis_enable");
-  rclc_executor_add_subscription(&executor, &chassis_enable_subscriber, &chassis_enable_msg, &chassis_enable_callback, ON_NEW_DATA);
+    "/robot_status/control_group1_enable");
+  rclc_executor_add_subscription(&executor, &control_group1_enable_subscriber, &control_group1_enable_msg, &control_group1_enable_callback, ON_NEW_DATA);
 
   rclc_subscription_init_default(
-    &mission_enable_subscriber,
+    &control_group2_enable_subscriber,
     &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool),
-    "/robot_status/mission_enable");
-  rclc_executor_add_subscription(&executor, &mission_enable_subscriber, &mission_enable_msg, &mission_enable_callback, ON_NEW_DATA);
+    "/robot_status/control_group2_enable");
+  rclc_executor_add_subscription(&executor, &control_group2_enable_subscriber, &control_group2_enable_msg, &control_group2_enable_callback, ON_NEW_DATA);
 
   rclc_subscription_init_default(
-    &neg_pressure_enable_subscriber,
+    &control_group3_enable_subscriber,
     &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool),
-    "/robot_status/neg_pressure_enable");
-  rclc_executor_add_subscription(&executor, &neg_pressure_enable_subscriber, &neg_pressure_enable_msg, &neg_pressure_enable_callback, ON_NEW_DATA);
+    "/robot_status/control_group3_enable");
+  rclc_executor_add_subscription(&executor, &control_group3_enable_subscriber, &control_group3_enable_msg, &control_group3_enable_callback, ON_NEW_DATA);
   
   return true;
 }
@@ -348,26 +361,26 @@ void initROS() {
   const AppSettings& settings = getAppSettings();
   const uint8_t inputMode = settings.switch_active_high ? INPUT : INPUT_PULLUP;
 
-  pinMode(settings.chassis_switch_pin, inputMode);
-  pinMode(settings.mission_switch_pin, inputMode);
-  pinMode(settings.neg_pressure_switch_pin, inputMode);
+  pinMode(settings.control_group1_switch_pin, inputMode);
+  pinMode(settings.control_group2_switch_pin, inputMode);
+  pinMode(settings.control_group3_switch_pin, inputMode);
 
-  pinMode(settings.chassis_power_pin, OUTPUT);
-  pinMode(settings.mission_power_12v_pin, OUTPUT);
-  pinMode(settings.mission_power_7v4_pin, OUTPUT);
-  pinMode(settings.neg_pressure_power_pin, OUTPUT);
+  pinMode(settings.control_group1_power_pin,     OUTPUT);
+  pinMode(settings.control_group2_power_12v_pin, OUTPUT);
+  pinMode(settings.control_group2_power_7v4_pin, OUTPUT);
+  pinMode(settings.control_group3_power_pin,     OUTPUT);
 
-  setOutputPower(settings.chassis_power_pin, false);
-  setOutputPower(settings.mission_power_12v_pin, false);
-  setOutputPower(settings.mission_power_7v4_pin, false);
-  setOutputPower(settings.neg_pressure_power_pin, false);
+  setOutputPower(settings.control_group1_power_pin,     false);
+  setOutputPower(settings.control_group2_power_12v_pin, false);
+  setOutputPower(settings.control_group2_power_7v4_pin, false);
+  setOutputPower(settings.control_group3_power_pin,     false);
   
 #if ENABLE_MICROROS
   counter_msg.data = 0;
   battery_voltage_msg.data = 0.0;
-  chassis_enable_msg.data = false;
-  mission_enable_msg.data = false;
-  neg_pressure_enable_msg.data = false;
+  control_group1_enable_msg.data = false;
+  control_group2_enable_msg.data = false;
+  control_group3_enable_msg.data = false;
   state = getAppSettings().runtime_microros_enabled ? WAITING_AGENT : AGENT_DISCONNECTED;
 #else
   state = AGENT_DISCONNECTED;

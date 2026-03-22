@@ -65,19 +65,26 @@ void voltmeter() {
 
 String getSensorReadings() {
   JsonDocument readings;
+  const AppSettings& settings = getAppSettings();
+
   readings["sensor"]                    = String(Vbattf);
   readings["GND"]                       = 0;
-  readings["chassisPower"]              = getPowerControlState(POWER_CHANNEL_CHASSIS);
-  readings["missionPower"]              = getPowerControlState(POWER_CHANNEL_MISSION);
-  readings["negativePressurePower"]     = getPowerControlState(POWER_CHANNEL_NEG_PRESSURE);
-  readings["chassisSwitch"]             = getPhysicalSwitchState(POWER_CHANNEL_CHASSIS);
-  readings["missionSwitch"]             = getPhysicalSwitchState(POWER_CHANNEL_MISSION);
-  readings["negativePressureSwitch"]    = getPhysicalSwitchState(POWER_CHANNEL_NEG_PRESSURE);
-  readings["chassisSwitchRaw"]          = getPhysicalSwitchRawLevel(POWER_CHANNEL_CHASSIS);
-  readings["missionSwitchRaw"]          = getPhysicalSwitchRawLevel(POWER_CHANNEL_MISSION);
-  readings["negativePressureSwitchRaw"] = getPhysicalSwitchRawLevel(POWER_CHANNEL_NEG_PRESSURE);
+  readings["controlGroup1Power"]        = getPowerControlState(POWER_CHANNEL_GROUP1);
+  readings["controlGroup2Power"]        = getPowerControlState(POWER_CHANNEL_GROUP2);
+  readings["controlGroup3Power"]        = getPowerControlState(POWER_CHANNEL_GROUP3);
+  readings["controlGroup1Switch"]       = getPhysicalSwitchState(POWER_CHANNEL_GROUP1);
+  readings["controlGroup2Switch"]       = getPhysicalSwitchState(POWER_CHANNEL_GROUP2);
+  readings["controlGroup3Switch"]       = getPhysicalSwitchState(POWER_CHANNEL_GROUP3);
+  readings["controlGroup1SwitchRaw"]    = getPhysicalSwitchRawLevel(POWER_CHANNEL_GROUP1);
+  readings["controlGroup2SwitchRaw"]    = getPhysicalSwitchRawLevel(POWER_CHANNEL_GROUP2);
+  readings["controlGroup3SwitchRaw"]    = getPhysicalSwitchRawLevel(POWER_CHANNEL_GROUP3);
+  readings["controlGroup1Name"]         = settings.control_group1_name;
+  readings["controlGroup2Name"]         = settings.control_group2_name;
+  readings["controlGroup3Name"]         = settings.control_group3_name;
+  readings["controlGroup1SwitchPin"]    = settings.control_group1_switch_pin;
+  readings["controlGroup2SwitchPin"]    = settings.control_group2_switch_pin;
+  readings["controlGroup3SwitchPin"]    = settings.control_group3_switch_pin;
 
-  const AppSettings& settings = getAppSettings();
   if      (Vbattf < settings.battery_disconnect_threshold) { readings["batteryStatus"] = "DISCONNECTED"; sensor_mode = BATT_DISCONNECTED; }
   else if (Vbattf < settings.battery_low_threshold)        { readings["batteryStatus"] = "LOW";          sensor_mode = BATT_LOW;          }
   else                                                     { readings["batteryStatus"] = "NORMAL";       sensor_mode = DEFAULT_MODE;      }

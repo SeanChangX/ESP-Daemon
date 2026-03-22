@@ -26,9 +26,9 @@ enum AgentState {
 };
 
 enum PowerControlChannel {
-  POWER_CHANNEL_CHASSIS = 0,
-  POWER_CHANNEL_MISSION = 1,
-  POWER_CHANNEL_NEG_PRESSURE = 2
+  POWER_CHANNEL_GROUP1 = 0,
+  POWER_CHANNEL_GROUP2 = 1,
+  POWER_CHANNEL_GROUP3 = 2
 };
 
 extern AgentState state;
@@ -37,14 +37,14 @@ void initROS();
 #if ENABLE_MICROROS
 bool create_entities();
 void destroy_entities();
-void chassis_enable_callback(const void* msgin);
-void mission_enable_callback(const void* msgin);
-void neg_pressure_enable_callback(const void* msgin);
+void control_group1_enable_callback(const void* msgin);
+void control_group2_enable_callback(const void* msgin);
+void control_group3_enable_callback(const void* msgin);
 void timer_callback(rcl_timer_t* timer, int64_t last_call_time);
 #endif
 void updatePowerControls();
 void setPowerControlOverride(PowerControlChannel channel, bool enabled);
-void triggerRemoteEmergencyStop();
+void triggerRemoteEmergencyStop(bool target_group1, bool target_group2, bool target_group3);
 bool getPowerControlState(PowerControlChannel channel);
 bool getPhysicalSwitchState(PowerControlChannel channel);
 int getPhysicalSwitchRawLevel(PowerControlChannel channel);

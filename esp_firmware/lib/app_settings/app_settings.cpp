@@ -4,12 +4,14 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <WiFi.h>
+#include <nvs_flash.h>
+#include <cstring>
 
 namespace {
 
 const char* kSettingsNvsNamespace = "espd_cfg";
 const char* kSettingsNvsKey = "settings_json";
-constexpr size_t   kMaxEmergencyMacs      = 16;
+constexpr size_t   kMaxEmergencySources   = 16;
 constexpr size_t   kMaxEStopRoutes        = 16;
 constexpr uint8_t  kEspNowChannelMin      = 1;
 constexpr uint8_t  kEspNowChannelMax      = 13;
@@ -35,6 +37,10 @@ constexpr float kVoltmeterOffsetAbsMaxUi  = 25.0f;
 constexpr uint16_t kWledPresetMin         = 1;
 constexpr uint16_t kWledPresetMax         = 250;
 constexpr size_t kWledUrlMaxLen           = 192;
+constexpr size_t kControlGroupNameMaxLen  = 32;
+constexpr const char* kDefaultControlGroupName1 = "Chassis Power";
+constexpr const char* kDefaultControlGroupName2 = "Actuators Power";
+constexpr const char* kDefaultControlGroupName3 = "Others Power";
 
 /** Default status-page Control Panel shortcut when unset or empty in JSON. */
 constexpr const char* kDefaultControlPanelUrl = "https://scx.tw/links";
@@ -132,6 +138,13 @@ bool isDigitsOnly(const String& value) {
   return true;
 }
 
+void normalizeControlGroupName(String& value, const char* fallback) {
+  value.trim();
+  if (value.length() == 0) {
+    value = fallback;
+  }
+}
+
 String defaultDeviceNameFromMac() {
   const uint64_t efuse = ESP.getEfuseMac();
   const uint32_t macTail = static_cast<uint32_t>(efuse & 0xFFFFFFULL);
@@ -170,14 +183,18 @@ void applyDefaults() {
   g_settings.runtime_sensor_enabled = true;
 #endif
 
-  g_settings.chassis_switch_pin = 8;
-  g_settings.mission_switch_pin = 9;
-  g_settings.neg_pressure_switch_pin = 20;
+  g_settings.control_group1_name = kDefaultControlGroupName1;
+  g_settings.control_group2_name = kDefaultControlGroupName2;
+  g_settings.control_group3_name = kDefaultControlGroupName3;
 
-  g_settings.chassis_power_pin = 4;
-  g_settings.mission_power_12v_pin = 3;
-  g_settings.mission_power_7v4_pin = 5;
-  g_settings.neg_pressure_power_pin = 10;
+  g_settings.control_group1_switch_pin = 8;
+  g_settings.control_group2_switch_pin = 9;
+  g_settings.control_group3_switch_pin = 20;
+
+  g_settings.control_group1_power_pin = 4;
+  g_settings.control_group2_power_12v_pin = 3;
+  g_settings.control_group2_power_7v4_pin = 5;
+  g_settings.control_group3_power_pin = 10;
 
   g_settings.switch_active_high = false;
   g_settings.power_active_high = false;
@@ -215,7 +232,7 @@ void applyDefaults() {
   g_settings.estop_buzzer_pin = 5;
   syncRoutesFromLegacyEStopFields();
 
-  g_settings.emergency_switch_macs.clear();
+  g_settings.emergency_sources.clear();
 
   g_settings.control_panel_url = kDefaultControlPanelUrl;
 }
@@ -357,15 +374,21 @@ void loadFromJson(const JsonObjectConst& json) {
   loadBool(json,   "runtimeMicroRosEnabled",        g_settings.runtime_microros_enabled);
   loadBool(json,   "runtimeLedEnabled",             g_settings.runtime_led_enabled);
   loadBool(json,   "runtimeSensorEnabled",          g_settings.runtime_sensor_enabled);
+  loadString(json, "controlGroup1Name",             g_settings.control_group1_name);
+  loadString(json, "controlGroup2Name",             g_settings.control_group2_name);
+  loadString(json, "controlGroup3Name",             g_settings.control_group3_name);
+  normalizeControlGroupName(g_settings.control_group1_name, kDefaultControlGroupName1);
+  normalizeControlGroupName(g_settings.control_group2_name, kDefaultControlGroupName2);
+  normalizeControlGroupName(g_settings.control_group3_name, kDefaultControlGroupName3);
 
-  loadUInt8(json,  "chassisSwitchPin",              g_settings.chassis_switch_pin);
-  loadUInt8(json,  "missionSwitchPin",              g_settings.mission_switch_pin);
-  loadUInt8(json,  "negPressureSwitchPin",          g_settings.neg_pressure_switch_pin);
+  loadUInt8(json,  "controlGroup1SwitchPin",        g_settings.control_group1_switch_pin);
+  loadUInt8(json,  "controlGroup2SwitchPin",        g_settings.control_group2_switch_pin);
+  loadUInt8(json,  "controlGroup3SwitchPin",        g_settings.control_group3_switch_pin);
 
-  loadUInt8(json,  "chassisPowerPin",               g_settings.chassis_power_pin);
-  loadUInt8(json,  "missionPower12vPin",            g_settings.mission_power_12v_pin);
-  loadUInt8(json,  "missionPower7v4Pin",            g_settings.mission_power_7v4_pin);
-  loadUInt8(json,  "negPressurePowerPin",           g_settings.neg_pressure_power_pin);
+  loadUInt8(json,  "controlGroup1PowerPin",         g_settings.control_group1_power_pin);
+  loadUInt8(json,  "controlGroup2Power12vPin",      g_settings.control_group2_power_12v_pin);
+  loadUInt8(json,  "controlGroup2Power7v4Pin",      g_settings.control_group2_power_7v4_pin);
+  loadUInt8(json,  "controlGroup3PowerPin",         g_settings.control_group3_power_pin);
 
   loadBool(json,   "switchActiveHigh",              g_settings.switch_active_high);
   loadBool(json,   "powerActiveHigh",               g_settings.power_active_high);
@@ -424,8 +447,42 @@ void loadFromJson(const JsonObjectConst& json) {
     }
   }
 
-  if (json["emergencySwitchMacs"].is<JsonArrayConst>()) {
-    g_settings.emergency_switch_macs.clear();
+  g_settings.emergency_sources.clear();
+  bool hasEmergencySourcesArray = false;
+  if (json["emergencySources"].is<JsonArrayConst>()) {
+    hasEmergencySourcesArray = true;
+    for (JsonVariantConst entry : json["emergencySources"].as<JsonArrayConst>()) {
+      if (!entry.is<JsonObjectConst>()) {
+        continue;
+      }
+      const JsonObjectConst srcObj = entry.as<JsonObjectConst>();
+      String macText;
+      loadString(srcObj, "mac", macText);
+      if (macText.length() == 0) {
+        continue;
+      }
+      std::array<uint8_t, 6> parsedMac = {};
+      if (!parseMacString(macText, parsedMac)) {
+        continue;
+      }
+
+      EmergencySourceConfig src = {};
+      src.mac = parsedMac;
+      src.control_group1_enabled = true;
+      src.control_group2_enabled = false;
+      src.control_group3_enabled = false;
+      loadBool(srcObj, "controlGroup1", src.control_group1_enabled);
+      loadBool(srcObj, "controlGroup2", src.control_group2_enabled);
+      loadBool(srcObj, "controlGroup3", src.control_group3_enabled);
+      g_settings.emergency_sources.push_back(src);
+      if (g_settings.emergency_sources.size() >= kMaxEmergencySources) {
+        break;
+      }
+    }
+  }
+
+  // Backward-compat loader: old schema used emergencySwitchMacs array.
+  if (!hasEmergencySourcesArray && json["emergencySwitchMacs"].is<JsonArrayConst>()) {
     for (JsonVariantConst entry : json["emergencySwitchMacs"].as<JsonArrayConst>()) {
       if (entry.isNull()) {
         continue;
@@ -436,10 +493,16 @@ void loadFromJson(const JsonObjectConst& json) {
         continue;
       }
       std::array<uint8_t, 6> mac = {};
-      if (parseMacString(macText, mac)) {
-        g_settings.emergency_switch_macs.push_back(mac);
+      if (!parseMacString(macText, mac)) {
+        continue;
       }
-      if (g_settings.emergency_switch_macs.size() >= kMaxEmergencyMacs) {
+      EmergencySourceConfig src = {};
+      src.mac = mac;
+      src.control_group1_enabled = true;
+      src.control_group2_enabled = false;
+      src.control_group3_enabled = false;
+      g_settings.emergency_sources.push_back(src);
+      if (g_settings.emergency_sources.size() >= kMaxEmergencySources) {
         break;
       }
     }
@@ -493,15 +556,18 @@ void appSettingsToJson(JsonDocument& doc, bool include_pin_code) {
   doc["runtimeMicroRosEnabled"]     = g_settings.runtime_microros_enabled;
   doc["runtimeLedEnabled"]          = g_settings.runtime_led_enabled;
   doc["runtimeSensorEnabled"]       = g_settings.runtime_sensor_enabled;
+  doc["controlGroup1Name"]          = g_settings.control_group1_name;
+  doc["controlGroup2Name"]          = g_settings.control_group2_name;
+  doc["controlGroup3Name"]          = g_settings.control_group3_name;
 
-  doc["chassisSwitchPin"]           = g_settings.chassis_switch_pin;
-  doc["missionSwitchPin"]           = g_settings.mission_switch_pin;
-  doc["negPressureSwitchPin"]       = g_settings.neg_pressure_switch_pin;
+  doc["controlGroup1SwitchPin"]     = g_settings.control_group1_switch_pin;
+  doc["controlGroup2SwitchPin"]     = g_settings.control_group2_switch_pin;
+  doc["controlGroup3SwitchPin"]     = g_settings.control_group3_switch_pin;
 
-  doc["chassisPowerPin"]            = g_settings.chassis_power_pin;
-  doc["missionPower12vPin"]         = g_settings.mission_power_12v_pin;
-  doc["missionPower7v4Pin"]         = g_settings.mission_power_7v4_pin;
-  doc["negPressurePowerPin"]        = g_settings.neg_pressure_power_pin;
+  doc["controlGroup1PowerPin"]      = g_settings.control_group1_power_pin;
+  doc["controlGroup2Power12vPin"]   = g_settings.control_group2_power_12v_pin;
+  doc["controlGroup2Power7v4Pin"]   = g_settings.control_group2_power_7v4_pin;
+  doc["controlGroup3PowerPin"]      = g_settings.control_group3_power_pin;
 
   doc["switchActiveHigh"]           = g_settings.switch_active_high;
   doc["powerActiveHigh"]            = g_settings.power_active_high;
@@ -547,9 +613,13 @@ void appSettingsToJson(JsonDocument& doc, bool include_pin_code) {
 
   doc["controlPanelUrl"] = g_settings.control_panel_url;
 
-  JsonArray macs = doc["emergencySwitchMacs"].to<JsonArray>();
-  for (const auto& mac : g_settings.emergency_switch_macs) {
-    macs.add(toMacString(mac));
+  JsonArray emergencySources = doc["emergencySources"].to<JsonArray>();
+  for (const auto& src : g_settings.emergency_sources) {
+    JsonObject srcObj = emergencySources.add<JsonObject>();
+    srcObj["mac"] = toMacString(src.mac);
+    srcObj["controlGroup1"] = src.control_group1_enabled;
+    srcObj["controlGroup2"] = src.control_group2_enabled;
+    srcObj["controlGroup3"] = src.control_group3_enabled;
   }
 }
 
@@ -574,6 +644,26 @@ bool saveAppSettings() {
 bool resetAppSettingsToDefaults() {
   applyDefaults();
   return saveAppSettings();
+}
+
+bool eraseAppSettingsFromNvs() {
+  const esp_err_t deinitErr = nvs_flash_deinit();
+  if (deinitErr != ESP_OK && deinitErr != ESP_ERR_NVS_NOT_INITIALIZED) {
+    return false;
+  }
+
+  if (nvs_flash_erase() != ESP_OK) {
+    return false;
+  }
+
+  if (nvs_flash_init() != ESP_OK) {
+    return false;
+  }
+
+  // Keep runtime consistent with wiped storage until next reboot.
+  // Note: this now erases the whole NVS partition (including Wi-Fi creds).
+  applyDefaults();
+  return true;
 }
 
 void initAppSettings(bool storage_available) {
@@ -649,6 +739,22 @@ bool updateAppSettingsFromJson(const JsonObjectConst& json, String& error) {
   if (g_settings.device_name.length() > 63) {
     g_settings = backup;
     error = "deviceName must be <= 63 characters";
+    return false;
+  }
+
+  if (g_settings.control_group1_name.length() > kControlGroupNameMaxLen) {
+    g_settings = backup;
+    error = "controlGroup1Name must be <= 32 characters";
+    return false;
+  }
+  if (g_settings.control_group2_name.length() > kControlGroupNameMaxLen) {
+    g_settings = backup;
+    error = "controlGroup2Name must be <= 32 characters";
+    return false;
+  }
+  if (g_settings.control_group3_name.length() > kControlGroupNameMaxLen) {
+    g_settings = backup;
+    error = "controlGroup3Name must be <= 32 characters";
     return false;
   }
 
@@ -797,6 +903,34 @@ bool updateAppSettingsFromJson(const JsonObjectConst& json, String& error) {
     return false;
   }
 
+  if (g_settings.emergency_sources.size() > kMaxEmergencySources) {
+    g_settings = backup;
+    error = "emergencySources maximum is 16";
+    return false;
+  }
+
+  for (size_t i = 0; i < g_settings.emergency_sources.size(); ++i) {
+    const EmergencySourceConfig& src = g_settings.emergency_sources[i];
+    if (!src.control_group1_enabled &&
+        !src.control_group2_enabled &&
+        !src.control_group3_enabled) {
+      g_settings = backup;
+      error = "emergencySources[" + String(i) + "] must target at least one control group";
+      return false;
+    }
+  }
+
+  for (size_t i = 0; i < g_settings.emergency_sources.size(); ++i) {
+    for (size_t j = i + 1; j < g_settings.emergency_sources.size(); ++j) {
+      if (memcmp(g_settings.emergency_sources[i].mac.data(),
+                 g_settings.emergency_sources[j].mac.data(), 6) == 0) {
+        g_settings = backup;
+        error = "Duplicate emergencySources MAC at index " + String(i) + " and " + String(j);
+        return false;
+      }
+    }
+  }
+
   if (g_settings.voltage_divider_r1 < 0.0f || g_settings.voltage_divider_r2 <= 0.0f) {
     g_settings = backup;
     error = "voltageDividerR1 must be >= 0 and voltageDividerR2 must be > 0";
@@ -816,13 +950,13 @@ bool updateAppSettingsFromJson(const JsonObjectConst& json, String& error) {
     return false;                                                                                                    \
   }
 
-  GPIO_CHECK("chassisSwitchPin",      g_settings.chassis_switch_pin);
-  GPIO_CHECK("missionSwitchPin",      g_settings.mission_switch_pin);
-  GPIO_CHECK("negPressureSwitchPin",  g_settings.neg_pressure_switch_pin);
-  GPIO_CHECK("chassisPowerPin",       g_settings.chassis_power_pin);
-  GPIO_CHECK("missionPower12vPin",    g_settings.mission_power_12v_pin);
-  GPIO_CHECK("missionPower7v4Pin",    g_settings.mission_power_7v4_pin);
-  GPIO_CHECK("negPressurePowerPin",   g_settings.neg_pressure_power_pin);
+  GPIO_CHECK("controlGroup1SwitchPin",   g_settings.control_group1_switch_pin);
+  GPIO_CHECK("controlGroup2SwitchPin",   g_settings.control_group2_switch_pin);
+  GPIO_CHECK("controlGroup3SwitchPin",   g_settings.control_group3_switch_pin);
+  GPIO_CHECK("controlGroup1PowerPin",    g_settings.control_group1_power_pin);
+  GPIO_CHECK("controlGroup2Power12vPin", g_settings.control_group2_power_12v_pin);
+  GPIO_CHECK("controlGroup2Power7v4Pin", g_settings.control_group2_power_7v4_pin);
+  GPIO_CHECK("controlGroup3PowerPin",    g_settings.control_group3_power_pin);
   GPIO_CHECK("ledPin",                g_settings.led_pin);
   GPIO_CHECK("voltmeterPin",          g_settings.voltmeter_pin);
 #undef GPIO_CHECK
@@ -836,13 +970,13 @@ bool updateAppSettingsFromJson(const JsonObjectConst& json, String& error) {
     };
 
     const std::array<PinItem, 9> pins = {{
-      {"chassisSwitchPin",      g_settings.chassis_switch_pin},
-      {"missionSwitchPin",      g_settings.mission_switch_pin},
-      {"negPressureSwitchPin",  g_settings.neg_pressure_switch_pin},
-      {"chassisPowerPin",       g_settings.chassis_power_pin},
-      {"missionPower12vPin",    g_settings.mission_power_12v_pin},
-      {"missionPower7v4Pin",    g_settings.mission_power_7v4_pin},
-      {"negPressurePowerPin",   g_settings.neg_pressure_power_pin},
+      {"controlGroup1SwitchPin",   g_settings.control_group1_switch_pin},
+      {"controlGroup2SwitchPin",   g_settings.control_group2_switch_pin},
+      {"controlGroup3SwitchPin",   g_settings.control_group3_switch_pin},
+      {"controlGroup1PowerPin",    g_settings.control_group1_power_pin},
+      {"controlGroup2Power12vPin", g_settings.control_group2_power_12v_pin},
+      {"controlGroup2Power7v4Pin", g_settings.control_group2_power_7v4_pin},
+      {"controlGroup3PowerPin",    g_settings.control_group3_power_pin},
       {"ledPin",                g_settings.led_pin},
       {"voltmeterPin",          g_settings.voltmeter_pin},
     }};

@@ -61,14 +61,28 @@ void applyEspNowChannel(bool verboseLog) {
 
 #if APP_MODE == APP_MODE_DAEMON
 
-bool isAuthorizedEmergencySwitch(const uint8_t* mac_addr) {
-  const auto& allowed = getAppSettings().emergency_switch_macs;
-  for (const auto& mac : allowed) {
-    if (memcmp(mac.data(), mac_addr, 6) == 0) {
-      return true;
+bool resolveEmergencyTargetsForSource(
+  const uint8_t* mac_addr,
+  bool& target_group1,
+  bool& target_group2,
+  bool& target_group3) {
+  target_group1 = false;
+  target_group2 = false;
+  target_group3 = false;
+
+  const auto& sources = getAppSettings().emergency_sources;
+  bool found = false;
+  for (const auto& src : sources) {
+    if (memcmp(src.mac.data(), mac_addr, 6) != 0) {
+      continue;
     }
+    found = true;
+    target_group1 = target_group1 || src.control_group1_enabled;
+    target_group2 = target_group2 || src.control_group2_enabled;
+    target_group3 = target_group3 || src.control_group3_enabled;
   }
-  return false;
+
+  return found;
 }
 
 void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* incomingData, int len) {
@@ -77,16 +91,20 @@ void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* incomingData, in
   }
 
   const uint8_t* mac_addr = info->src_addr;
-  if (!isAuthorizedEmergencySwitch(mac_addr)) {
+  bool targetGroup1 = false;
+  bool targetGroup2 = false;
+  bool targetGroup3 = false;
+  if (!resolveEmergencyTargetsForSource(mac_addr, targetGroup1, targetGroup2, targetGroup3)) {
     return;
   }
 
   // Remote emergency switch is expected to repeatedly transmit "STOP".
   // Any authorized packet is treated as an emergency-stop trigger.
-  triggerRemoteEmergencyStop();
+  triggerRemoteEmergencyStop(targetGroup1, targetGroup2, targetGroup3);
 
-  DAEMON_LOGF("ESP-NOW emergency stop from %02X:%02X:%02X:%02X:%02X:%02X -> CHASSIS DISABLED\n",
-              mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+  DAEMON_LOGF("ESP-NOW emergency stop from %02X:%02X:%02X:%02X:%02X:%02X -> groups(%d,%d,%d) forced OFF\n",
+              mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5],
+              targetGroup1 ? 1 : 0, targetGroup2 ? 1 : 0, targetGroup3 ? 1 : 0);
 }
 
 #else
@@ -818,8 +836,8 @@ void initESPNow() {
 
 #if APP_MODE == APP_MODE_DAEMON
   esp_now_register_recv_cb(onDataRecv);
-  DAEMON_LOGF("ESP-NOW receiver initialized (allowed emergency switches: %d)\n",
-              static_cast<int>(getAppSettings().emergency_switch_macs.size()));
+  DAEMON_LOGF("ESP-NOW receiver initialized (configured emergency sources: %d)\n",
+              static_cast<int>(getAppSettings().emergency_sources.size()));
 #else
   ensureAllRoutePeersConfigured(true);
   DAEMON_LOGF("ESP-NOW E-stop sender initialized (routes=%d)\n", static_cast<int>(g_estopRoutes.size()));

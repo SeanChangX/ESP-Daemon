@@ -435,16 +435,36 @@ function updateChartFontSizes() {
   handleResize();
 }
 
+function getExportTimestampUtcCompact(dateValue) {
+  const d = dateValue || new Date();
+  const y = String(d.getUTCFullYear());
+  const mo = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const da = String(d.getUTCDate()).padStart(2, '0');
+  const h = String(d.getUTCHours()).padStart(2, '0');
+  const mi = String(d.getUTCMinutes()).padStart(2, '0');
+  const s = String(d.getUTCSeconds()).padStart(2, '0');
+  return y + mo + da + 'T' + h + mi + s + 'Z';
+}
+
+function getExportTimestampUtcIso(dateValue) {
+  const d = dateValue || new Date();
+  return d.toISOString();
+}
+
 function triggerTelemetryDownloadJson() {
   if (!lastTelemetryPayload || !lastTelemetryPayload.count) {
     return;
   }
-  const body = JSON.stringify(lastTelemetryPayload, null, 2);
+  const now = new Date();
+  const exported = Object.assign({}, lastTelemetryPayload, {
+    exportedAt: getExportTimestampUtcIso(now)
+  });
+  const body = JSON.stringify(exported, null, 2);
   const blob = new Blob([body], { type: 'application/json' });
   const a = document.createElement('a');
-  const ms = lastTelemetryPayload.deviceMs != null ? lastTelemetryPayload.deviceMs : Date.now();
+  const stamp = getExportTimestampUtcCompact(now);
   a.href = URL.createObjectURL(blob);
-  a.download = 'battery_log_' + ms + '.json';
+  a.download = 'battery_log_' + stamp + '.json';
   a.click();
   URL.revokeObjectURL(a.href);
 }
@@ -461,9 +481,9 @@ function triggerTelemetryDownloadCsv() {
   }
   const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
   const a = document.createElement('a');
-  const ms = lastTelemetryPayload.deviceMs != null ? lastTelemetryPayload.deviceMs : Date.now();
+  const stamp = getExportTimestampUtcCompact(new Date());
   a.href = URL.createObjectURL(blob);
-  a.download = 'battery_log_' + ms + '.csv';
+  a.download = 'battery_log_' + stamp + '.csv';
   a.click();
   URL.revokeObjectURL(a.href);
 }
@@ -485,10 +505,43 @@ window.addEventListener('load', function() {
 
 setInterval(fetchTelemetry, 2000);
 
+const CONTROL_GROUP_DEFAULTS = {
+  controlGroup1: 'Chassis Power',
+  controlGroup2: 'Actuators Power',
+  controlGroup3: 'Others Power'
+};
+
+const CONTROL_GROUP_FIELDS = {
+  controlGroup1: 'controlGroup1Name',
+  controlGroup2: 'controlGroup2Name',
+  controlGroup3: 'controlGroup3Name'
+};
+
+function normalizeGroupName(value, fallback) {
+  const text = String(value == null ? '' : value).trim();
+  return text.length ? text : fallback;
+}
+
+function normalizePowerLabel(name) {
+  const text = String(name == null ? '' : name).trim();
+  if (!text.length) {
+    return '';
+  }
+  return /\bpower$/i.test(text) ? text : (text + ' Power');
+}
+
+function normalizeSwitchLabelBase(name) {
+  const text = String(name == null ? '' : name).trim();
+  if (!text.length) {
+    return '';
+  }
+  return text.replace(/\s+power$/i, '').trim() || text;
+}
+
 const POWER_SWITCH_CONFIG = [
-  { key: 'chassisPower', switchId: 'chassisPowerSwitch', statusId: 'chassisPowerStatus', label: 'Chassis Power' },
-  { key: 'missionPower', switchId: 'missionPowerSwitch', statusId: 'missionPowerStatus', label: 'Mission Mechanism Power' },
-  { key: 'negativePressurePower', switchId: 'negativePressurePowerSwitch', statusId: 'negativePressurePowerStatus', label: 'Negative Pressure Chassis' }
+  { key: 'controlGroup1Power', switchId: 'controlGroup1PowerSwitch', statusId: 'controlGroup1PowerStatus', labelId: 'controlGroup1PowerLabel', groupKey: 'controlGroup1', label: '' },
+  { key: 'controlGroup2Power', switchId: 'controlGroup2PowerSwitch', statusId: 'controlGroup2PowerStatus', labelId: 'controlGroup2PowerLabel', groupKey: 'controlGroup2', label: '' },
+  { key: 'controlGroup3Power', switchId: 'controlGroup3PowerSwitch', statusId: 'controlGroup3PowerStatus', labelId: 'controlGroup3PowerLabel', groupKey: 'controlGroup3', label: '' }
 ];
 
 var emergencyPowerPanelLocked = false;
@@ -543,39 +596,72 @@ function sendEmergencyStopAll() {
   };
   xhr.send(
     JSON.stringify({
-      chassisPower: false,
-      missionPower: false,
-      negativePressurePower: false
+      controlGroup1Power: false,
+      controlGroup2Power: false,
+      controlGroup3Power: false
     })
   );
 }
 
 const PHYSICAL_SWITCH_CONFIG = [
-  { key: 'chassisSwitch', rawKey: 'chassisSwitchRaw', statusId: 'chassisSwitchStatus', label: 'Chassis Switch', pinField: 'chassisSwitchPin' },
-  { key: 'missionSwitch', rawKey: 'missionSwitchRaw', statusId: 'missionSwitchStatus', label: 'Mission Switch', pinField: 'missionSwitchPin' },
-  { key: 'negativePressureSwitch', rawKey: 'negativePressureSwitchRaw', statusId: 'negativePressureSwitchStatus', label: 'Negative Pressure Switch', pinField: 'negPressureSwitchPin' }
+  { key: 'controlGroup1Switch', rawKey: 'controlGroup1SwitchRaw', statusId: 'controlGroup1SwitchStatus', groupKey: 'controlGroup1', label: '', pinField: 'controlGroup1SwitchPin' },
+  { key: 'controlGroup2Switch', rawKey: 'controlGroup2SwitchRaw', statusId: 'controlGroup2SwitchStatus', groupKey: 'controlGroup2', label: '', pinField: 'controlGroup2SwitchPin' },
+  { key: 'controlGroup3Switch', rawKey: 'controlGroup3SwitchRaw', statusId: 'controlGroup3SwitchStatus', groupKey: 'controlGroup3', label: '', pinField: 'controlGroup3SwitchPin' }
 ];
 
-function loadSwitchLabelsFromSettings() {
-  fetch('/settings/read', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ authPin: '' })
-  })
+function applyControlGroupLabels(settings) {
+  const names = {
+    controlGroup1: CONTROL_GROUP_DEFAULTS.controlGroup1,
+    controlGroup2: CONTROL_GROUP_DEFAULTS.controlGroup2,
+    controlGroup3: CONTROL_GROUP_DEFAULTS.controlGroup3
+  };
+
+  if (settings && typeof settings === 'object') {
+    names.controlGroup1 = normalizeGroupName(settings[CONTROL_GROUP_FIELDS.controlGroup1], CONTROL_GROUP_DEFAULTS.controlGroup1);
+    names.controlGroup2 = normalizeGroupName(settings[CONTROL_GROUP_FIELDS.controlGroup2], CONTROL_GROUP_DEFAULTS.controlGroup2);
+    names.controlGroup3 = normalizeGroupName(settings[CONTROL_GROUP_FIELDS.controlGroup3], CONTROL_GROUP_DEFAULTS.controlGroup3);
+  }
+
+  POWER_SWITCH_CONFIG.forEach((config) => {
+    const groupName = names[config.groupKey] || CONTROL_GROUP_DEFAULTS.controlGroup1;
+    config.label = normalizePowerLabel(groupName);
+    if (config.labelId) {
+      const labelElement = document.getElementById(config.labelId);
+      if (labelElement) {
+        labelElement.textContent = config.label;
+      }
+    }
+  });
+
+  PHYSICAL_SWITCH_CONFIG.forEach((config) => {
+    const groupName = names[config.groupKey] || CONTROL_GROUP_DEFAULTS.controlGroup1;
+    let label = normalizeSwitchLabelBase(groupName) + ' Switch';
+    if (settings) {
+      const pin = settings[config.pinField];
+      if (pin !== undefined && pin !== null && Number.isFinite(Number(pin))) {
+        label += ' (GPIO' + Number(pin) + ')';
+      }
+    }
+    config.label = label;
+  });
+}
+
+function loadControlLabelsFromReadings() {
+  fetch('/readings')
     .then((res) => (res.ok ? res.json() : null))
-    .then((settings) => {
-      if (!settings) return;
-      PHYSICAL_SWITCH_CONFIG.forEach((config) => {
-        const pin = settings[config.pinField];
-        if (pin !== undefined && pin !== null && Number.isFinite(Number(pin))) {
-          config.label = config.label.split(' (GPIO')[0] + ' (GPIO' + Number(pin) + ')';
-        }
-      });
+    .then((readings) => {
+      if (!readings) {
+        applyControlGroupLabels(null);
+        return;
+      }
+      applyControlGroupLabels(readings);
     })
     .catch(() => {
-      // Keep default labels when settings endpoint is unavailable.
+      applyControlGroupLabels(null);
     });
 }
+
+applyControlGroupLabels(null);
 
 function normalizeBool(value) {
   return value === true || value === 1 || value === '1' || value === 'true';
@@ -646,6 +732,7 @@ function updatePhysicalSwitchUI(jsonValue) {
 
 // Plot data from JSON response (/readings): status + live voltage readout (rolling history from /telemetry).
 function plotData(jsonValue) {
+  applyControlGroupLabels(jsonValue);
   updateSystemStatus(jsonValue);
   updatePowerStateUI(jsonValue);
   updatePhysicalSwitchUI(jsonValue);
@@ -708,7 +795,7 @@ window.addEventListener('orientationchange', function() {
 // Emergency/power switch functionality
 document.addEventListener('DOMContentLoaded', function() {
   const actionButton = document.getElementById('actionButton');
-  loadSwitchLabelsFromSettings();
+  loadControlLabelsFromReadings();
 
   POWER_SWITCH_CONFIG.forEach((config) => {
     const switchElement = document.getElementById(config.switchId);

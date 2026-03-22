@@ -14,7 +14,6 @@
 #include <ArduinoJson.h>
 #include <WebServer.h>
 #include <ElegantOTA.h>
-#include <cstring>
 
 WebServer server(80);
 
@@ -247,17 +246,258 @@ static bool applySettingsUpdate(const JsonObjectConst& updateObj, String& update
   return true;
 }
 
-static void copyImportSettingsWithoutPinFields(const JsonObjectConst& src, JsonObject& dst) {
-  for (JsonPairConst kv : src) {
-    const char* key = kv.key().c_str();
-    if (strcmp(key, "pinProtectionEnabled") == 0 ||
-        strcmp(key, "pinCode") == 0 ||
-        strcmp(key, "pinRequired") == 0 ||
-        strcmp(key, "authPin") == 0) {
-      continue;
-    }
-    dst[key] = kv.value();
+static void copyKeyIfPresent(const JsonObjectConst& src, JsonObject& dst, const char* key) {
+  const JsonVariantConst v = src[key];
+  if (v.isNull()) {
+    return;
   }
+  dst[key] = v;
+}
+
+static void copyMappedKeyIfPresent(const JsonObjectConst& src, JsonObject& dst, const char* srcKey, const char* dstKey) {
+  const JsonVariantConst v = src[srcKey];
+  if (v.isNull()) {
+    return;
+  }
+  dst[dstKey] = v;
+}
+
+static bool looksStructuredSettingsPayload(const JsonObjectConst& src) {
+  return src["device"].is<JsonObjectConst>() ||
+         src["runtime"].is<JsonObjectConst>() ||
+         src["ros"].is<JsonObjectConst>() ||
+         src["io"].is<JsonObjectConst>() ||
+         src["led"].is<JsonObjectConst>() ||
+         src["voltmeter"].is<JsonObjectConst>() ||
+         src["network"].is<JsonObjectConst>() ||
+         src["estop"].is<JsonObjectConst>();
+}
+
+static bool validateStructuredSettingsPayload(const JsonObjectConst& src, String& error) {
+  if (!src["schema"].is<const char*>()) {
+    error = "Unsupported import format: missing schema";
+    return false;
+  }
+  const String schema = String(src["schema"].as<const char*>());
+  if (schema != "esp-daemon.settings-export") {
+    error = "Unsupported import schema";
+    return false;
+  }
+
+  if (!src["schemaVersion"].is<int>()) {
+    error = "Unsupported import format: missing schemaVersion";
+    return false;
+  }
+  const int schemaVersion = src["schemaVersion"].as<int>();
+  if (schemaVersion != 2) {
+    error = "Unsupported schemaVersion (expected 2)";
+    return false;
+  }
+
+  if (!src["format"].is<const char*>()) {
+    error = "Unsupported import format: missing format";
+    return false;
+  }
+  const String format = String(src["format"].as<const char*>());
+  if (format != "structured") {
+    error = "Unsupported import format (expected structured)";
+    return false;
+  }
+
+  if (!looksStructuredSettingsPayload(src)) {
+    error = "Unsupported import payload: missing structured sections";
+    return false;
+  }
+
+  return true;
+}
+
+static void buildStructuredSettingsExportPayload(JsonDocument& payload) {
+  JsonDocument flat;
+  appSettingsToJson(flat, false);
+  flat.remove("pinProtectionEnabled");
+  flat.remove("pinCode");
+  flat.remove("pinRequired");
+
+  const JsonObjectConst src = flat.as<JsonObjectConst>();
+
+  payload["schema"]         = "esp-daemon.settings-export";
+  payload["schemaVersion"]  = 2;
+  payload["format"]         = "structured";
+  payload["generatedBy"]    = "esp-daemon";
+  payload["fwVersion"]      = ESP_DAEMON_FW_VERSION;
+  payload["exportedAtMs"]   = millis();
+
+  JsonObject device = payload["device"].to<JsonObject>();
+  copyMappedKeyIfPresent(src, device, "deviceName", "name");
+  copyKeyIfPresent(src, device, "controlPanelUrl");
+
+  JsonObject runtime = payload["runtime"].to<JsonObject>();
+  copyMappedKeyIfPresent(src, runtime, "runtimeEspNowEnabled",   "espNowEnabled");
+  copyMappedKeyIfPresent(src, runtime, "runtimeMicroRosEnabled", "microRosEnabled");
+  copyMappedKeyIfPresent(src, runtime, "runtimeLedEnabled",      "ledEnabled");
+  copyMappedKeyIfPresent(src, runtime, "runtimeSensorEnabled",   "sensorEnabled");
+
+  JsonObject ros = payload["ros"].to<JsonObject>();
+  copyMappedKeyIfPresent(src, ros, "rosNodeName",        "nodeName");
+  copyMappedKeyIfPresent(src, ros, "rosDomainId",        "domainId");
+  copyMappedKeyIfPresent(src, ros, "rosTimerMs",         "timerMs");
+  copyMappedKeyIfPresent(src, ros, "mrosTimeoutMs",      "timeoutMs");
+  copyMappedKeyIfPresent(src, ros, "mrosPingIntervalMs", "pingIntervalMs");
+
+  JsonObject io = payload["io"].to<JsonObject>();
+  JsonObject ioSwitches = io["switches"].to<JsonObject>();
+  copyMappedKeyIfPresent(src, ioSwitches, "chassisSwitchPin",     "chassisPin");
+  copyMappedKeyIfPresent(src, ioSwitches, "missionSwitchPin",     "missionPin");
+  copyMappedKeyIfPresent(src, ioSwitches, "negPressureSwitchPin", "negativePressurePin");
+
+  JsonObject ioPower = io["powerOutputs"].to<JsonObject>();
+  copyMappedKeyIfPresent(src, ioPower, "chassisPowerPin",     "chassisPin");
+  copyMappedKeyIfPresent(src, ioPower, "missionPower12vPin",  "mission12vPin");
+  copyMappedKeyIfPresent(src, ioPower, "missionPower7v4Pin",  "mission7v4Pin");
+  copyMappedKeyIfPresent(src, ioPower, "negPressurePowerPin", "negativePressurePin");
+
+  JsonObject ioLogic = io["logic"].to<JsonObject>();
+  copyKeyIfPresent(src, ioLogic, "switchActiveHigh");
+  copyKeyIfPresent(src, ioLogic, "powerActiveHigh");
+
+  JsonObject led = payload["led"].to<JsonObject>();
+  copyKeyIfPresent(src, led, "ledPin");
+  copyKeyIfPresent(src, led, "ledCount");
+  copyKeyIfPresent(src, led, "ledBrightness");
+  copyKeyIfPresent(src, led, "ledOverrideDurationMs");
+
+  JsonObject voltmeter = payload["voltmeter"].to<JsonObject>();
+  copyKeyIfPresent(src, voltmeter, "voltmeterPin");
+  copyKeyIfPresent(src, voltmeter, "voltageDividerR1");
+  copyKeyIfPresent(src, voltmeter, "voltageDividerR2");
+  copyKeyIfPresent(src, voltmeter, "voltmeterCalibration");
+  copyKeyIfPresent(src, voltmeter, "voltmeterOffset");
+  copyKeyIfPresent(src, voltmeter, "slidingWindowSize");
+  copyKeyIfPresent(src, voltmeter, "timerPeriodUs");
+  copyKeyIfPresent(src, voltmeter, "batteryDisconnectThreshold");
+  copyKeyIfPresent(src, voltmeter, "batteryLowThreshold");
+
+  JsonObject network = payload["network"].to<JsonObject>();
+  copyKeyIfPresent(src, network, "espNowChannel");
+  copyKeyIfPresent(src, network, "emergencySwitchMacs");
+
+  JsonObject estop = payload["estop"].to<JsonObject>();
+  copyMappedKeyIfPresent(src, estop, "estopTargetMac",           "targetMac");
+  copyMappedKeyIfPresent(src, estop, "estopSwitchPin",           "switchPin");
+  copyMappedKeyIfPresent(src, estop, "estopSwitchActiveHigh",    "switchActiveHigh");
+  copyMappedKeyIfPresent(src, estop, "estopSwitchLogicInverted", "switchLogicInverted");
+  copyMappedKeyIfPresent(src, estop, "estopRoutes",              "routes");
+
+  JsonObject estopWled = estop["wled"].to<JsonObject>();
+  copyMappedKeyIfPresent(src, estopWled, "estopWledEnabled", "enabled");
+  copyMappedKeyIfPresent(src, estopWled, "estopWledBaseUrl", "baseUrl");
+  copyMappedKeyIfPresent(src, estopWled, "estopWledPreset",  "preset");
+
+  JsonObject estopBuzzer = estop["buzzer"].to<JsonObject>();
+  copyMappedKeyIfPresent(src, estopBuzzer, "estopBuzzerEnabled", "enabled");
+  copyMappedKeyIfPresent(src, estopBuzzer, "estopBuzzerPin",     "pin");
+}
+
+static void normalizeStructuredSettingsForImport(const JsonObjectConst& src, JsonObject& dst) {
+  if (src["device"].is<JsonObjectConst>()) {
+    const JsonObjectConst device = src["device"].as<JsonObjectConst>();
+    copyMappedKeyIfPresent(device, dst, "name", "deviceName");
+    copyKeyIfPresent(device, dst, "controlPanelUrl");
+  }
+
+  if (src["runtime"].is<JsonObjectConst>()) {
+    const JsonObjectConst runtime = src["runtime"].as<JsonObjectConst>();
+    copyMappedKeyIfPresent(runtime, dst, "espNowEnabled",   "runtimeEspNowEnabled");
+    copyMappedKeyIfPresent(runtime, dst, "microRosEnabled", "runtimeMicroRosEnabled");
+    copyMappedKeyIfPresent(runtime, dst, "ledEnabled",      "runtimeLedEnabled");
+    copyMappedKeyIfPresent(runtime, dst, "sensorEnabled",   "runtimeSensorEnabled");
+  }
+
+  if (src["ros"].is<JsonObjectConst>()) {
+    const JsonObjectConst ros = src["ros"].as<JsonObjectConst>();
+    copyMappedKeyIfPresent(ros, dst, "nodeName",       "rosNodeName");
+    copyMappedKeyIfPresent(ros, dst, "domainId",       "rosDomainId");
+    copyMappedKeyIfPresent(ros, dst, "timerMs",        "rosTimerMs");
+    copyMappedKeyIfPresent(ros, dst, "timeoutMs",      "mrosTimeoutMs");
+    copyMappedKeyIfPresent(ros, dst, "pingIntervalMs", "mrosPingIntervalMs");
+  }
+
+  if (src["io"].is<JsonObjectConst>()) {
+    const JsonObjectConst io = src["io"].as<JsonObjectConst>();
+    if (io["switches"].is<JsonObjectConst>()) {
+      const JsonObjectConst ioSwitches = io["switches"].as<JsonObjectConst>();
+      copyMappedKeyIfPresent(ioSwitches, dst, "chassisPin",          "chassisSwitchPin");
+      copyMappedKeyIfPresent(ioSwitches, dst, "missionPin",          "missionSwitchPin");
+      copyMappedKeyIfPresent(ioSwitches, dst, "negativePressurePin", "negPressureSwitchPin");
+    }
+    if (io["powerOutputs"].is<JsonObjectConst>()) {
+      const JsonObjectConst ioPower = io["powerOutputs"].as<JsonObjectConst>();
+      copyMappedKeyIfPresent(ioPower, dst, "chassisPin",          "chassisPowerPin");
+      copyMappedKeyIfPresent(ioPower, dst, "mission12vPin",       "missionPower12vPin");
+      copyMappedKeyIfPresent(ioPower, dst, "mission7v4Pin",       "missionPower7v4Pin");
+      copyMappedKeyIfPresent(ioPower, dst, "negativePressurePin", "negPressurePowerPin");
+    }
+    if (io["logic"].is<JsonObjectConst>()) {
+      const JsonObjectConst ioLogic = io["logic"].as<JsonObjectConst>();
+      copyKeyIfPresent(ioLogic, dst, "switchActiveHigh");
+      copyKeyIfPresent(ioLogic, dst, "powerActiveHigh");
+    }
+  }
+
+  if (src["led"].is<JsonObjectConst>()) {
+    const JsonObjectConst led = src["led"].as<JsonObjectConst>();
+    copyKeyIfPresent(led, dst, "ledPin");
+    copyKeyIfPresent(led, dst, "ledCount");
+    copyKeyIfPresent(led, dst, "ledBrightness");
+    copyKeyIfPresent(led, dst, "ledOverrideDurationMs");
+  }
+
+  if (src["voltmeter"].is<JsonObjectConst>()) {
+    const JsonObjectConst voltmeter = src["voltmeter"].as<JsonObjectConst>();
+    copyKeyIfPresent(voltmeter, dst, "voltmeterPin");
+    copyKeyIfPresent(voltmeter, dst, "voltageDividerR1");
+    copyKeyIfPresent(voltmeter, dst, "voltageDividerR2");
+    copyKeyIfPresent(voltmeter, dst, "voltmeterCalibration");
+    copyKeyIfPresent(voltmeter, dst, "voltmeterOffset");
+    copyKeyIfPresent(voltmeter, dst, "slidingWindowSize");
+    copyKeyIfPresent(voltmeter, dst, "timerPeriodUs");
+    copyKeyIfPresent(voltmeter, dst, "batteryDisconnectThreshold");
+    copyKeyIfPresent(voltmeter, dst, "batteryLowThreshold");
+  }
+
+  if (src["network"].is<JsonObjectConst>()) {
+    const JsonObjectConst network = src["network"].as<JsonObjectConst>();
+    copyKeyIfPresent(network, dst, "espNowChannel");
+    copyKeyIfPresent(network, dst, "emergencySwitchMacs");
+  }
+
+  if (src["estop"].is<JsonObjectConst>()) {
+    const JsonObjectConst estop = src["estop"].as<JsonObjectConst>();
+    copyMappedKeyIfPresent(estop, dst, "targetMac",           "estopTargetMac");
+    copyMappedKeyIfPresent(estop, dst, "switchPin",           "estopSwitchPin");
+    copyMappedKeyIfPresent(estop, dst, "switchActiveHigh",    "estopSwitchActiveHigh");
+    copyMappedKeyIfPresent(estop, dst, "switchLogicInverted", "estopSwitchLogicInverted");
+    copyMappedKeyIfPresent(estop, dst, "routes",              "estopRoutes");
+
+    if (estop["wled"].is<JsonObjectConst>()) {
+      const JsonObjectConst estopWled = estop["wled"].as<JsonObjectConst>();
+      copyMappedKeyIfPresent(estopWled, dst, "enabled", "estopWledEnabled");
+      copyMappedKeyIfPresent(estopWled, dst, "baseUrl", "estopWledBaseUrl");
+      copyMappedKeyIfPresent(estopWled, dst, "preset",  "estopWledPreset");
+    }
+    if (estop["buzzer"].is<JsonObjectConst>()) {
+      const JsonObjectConst estopBuzzer = estop["buzzer"].as<JsonObjectConst>();
+      copyMappedKeyIfPresent(estopBuzzer, dst, "enabled", "estopBuzzerEnabled");
+      copyMappedKeyIfPresent(estopBuzzer, dst, "pin",     "estopBuzzerPin");
+    }
+  }
+
+  // Safety: ignore any PIN fields if present in structured export.
+  dst.remove("pinProtectionEnabled");
+  dst.remove("pinCode");
+  dst.remove("pinRequired");
+  dst.remove("authPin");
 }
 
 #if APP_MODE == APP_MODE_ESTOP
@@ -498,11 +738,7 @@ static void handleSettingsExportPost() {
   }
 
   JsonDocument payload;
-  appSettingsToJson(payload, false);
-  // Backups must never contain PIN data or PIN state switches.
-  payload.remove("pinProtectionEnabled");
-  payload.remove("pinCode");
-  payload.remove("pinRequired");
+  buildStructuredSettingsExportPayload(payload);
 
   String output;
   serializeJsonPretty(payload, output);
@@ -528,9 +764,15 @@ static void handleSettingsImportPost() {
     ? root["settings"].as<JsonObjectConst>()
     : root;
 
+  String formatError;
+  if (!validateStructuredSettingsPayload(updateObj, formatError)) {
+    server.send(400, "application/json", buildSettingsResponse(false, formatError));
+    return;
+  }
+
   JsonDocument sanitizedDoc;
   JsonObject sanitizedUpdate = sanitizedDoc.to<JsonObject>();
-  copyImportSettingsWithoutPinFields(updateObj, sanitizedUpdate);
+  normalizeStructuredSettingsForImport(updateObj, sanitizedUpdate);
   const JsonObjectConst sanitizedUpdateConst = sanitizedUpdate;
 
   String updateError;

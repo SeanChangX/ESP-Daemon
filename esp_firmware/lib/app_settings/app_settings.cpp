@@ -2,12 +2,13 @@
 #include "config.h"
 
 #include <ArduinoJson.h>
-#include <SPIFFS.h>
+#include <Preferences.h>
 #include <WiFi.h>
 
 namespace {
 
-const char* kSettingsPath = "/settings.json";
+const char* kSettingsNvsNamespace = "espd_cfg";
+const char* kSettingsNvsKey = "settings_json";
 constexpr size_t   kMaxEmergencyMacs      = 16;
 constexpr size_t   kMaxEStopRoutes        = 16;
 constexpr uint8_t  kEspNowChannelMin      = 1;
@@ -556,18 +557,18 @@ bool saveAppSettings() {
   JsonDocument doc;
   appSettingsToJson(doc, true);
 
-  File file = SPIFFS.open(kSettingsPath, FILE_WRITE);
-  if (!file) {
+  String payload;
+  if (serializeJson(doc, payload) == 0 || payload.length() == 0) {
     return false;
   }
 
-  if (serializeJsonPretty(doc, file) == 0) {
-    file.close();
+  Preferences prefs;
+  if (!prefs.begin(kSettingsNvsNamespace, false)) {
     return false;
   }
-
-  file.close();
-  return true;
+  const size_t written = prefs.putString(kSettingsNvsKey, payload);
+  prefs.end();
+  return written > 0;
 }
 
 bool resetAppSettingsToDefaults() {
@@ -576,38 +577,38 @@ bool resetAppSettingsToDefaults() {
 }
 
 void initAppSettings(bool storage_available) {
+  (void)storage_available;
   applyDefaults();
+  bool loaded = false;
 
-  if (!storage_available) {
-    DAEMON_LOGLN("Settings storage unavailable, using in-memory defaults");
-    return;
+  // Primary storage: NVS (Preferences). Survives SPIFFS uploads.
+  Preferences prefs;
+  if (prefs.begin(kSettingsNvsNamespace, true)) {
+    const String payload = prefs.getString(kSettingsNvsKey, "");
+    prefs.end();
+
+    if (payload.length() > 0) {
+      JsonDocument doc;
+      const DeserializationError err = deserializeJson(doc, payload);
+      if (err) {
+        DAEMON_LOGF("Failed to parse NVS settings (%s), using defaults\n", err.c_str());
+      } else if (!doc.is<JsonObject>()) {
+        DAEMON_LOGLN("Invalid NVS settings root, using defaults");
+      } else {
+        loadFromJson(doc.as<JsonObjectConst>());
+        loaded = true;
+      }
+    } else {
+      DAEMON_LOGLN("NVS settings missing, using defaults");
+    }
+  } else {
+    DAEMON_LOGLN("Failed to open NVS settings namespace, using defaults");
   }
 
-  if (!SPIFFS.exists(kSettingsPath)) {
-    DAEMON_LOGF("Settings file missing: %s (using in-memory defaults)\n", kSettingsPath);
-    return;
+  if (!loaded) {
+    DAEMON_LOGLN("Using in-memory default settings");
   }
 
-  File file = SPIFFS.open(kSettingsPath, FILE_READ);
-  if (!file) {
-    DAEMON_LOGF("Failed to open settings file: %s (using in-memory defaults)\n", kSettingsPath);
-    return;
-  }
-
-  JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, file);
-  file.close();
-  if (err) {
-    DAEMON_LOGF("Failed to parse settings file: %s (%s)\n", kSettingsPath, err.c_str());
-    return;
-  }
-
-  if (!doc.is<JsonObject>()) {
-    DAEMON_LOGF("Invalid settings root in %s (using in-memory defaults)\n", kSettingsPath);
-    return;
-  }
-
-  loadFromJson(doc.as<JsonObjectConst>());
   if (!validateControlPanelUrl(g_settings.control_panel_url)) {
     g_settings.control_panel_url = kDefaultControlPanelUrl;
   }

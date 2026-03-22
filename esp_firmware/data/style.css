@@ -629,8 +629,8 @@ textarea:focus-visible {
 }
 
 .status-items-container--estop {
-  max-height: none;
-  overflow: visible;
+  max-height: none !important;
+  overflow: visible !important;
 }
 
 .light-mode .status-items-container {

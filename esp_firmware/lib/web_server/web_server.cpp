@@ -87,6 +87,20 @@ static String getContentType(const String& path) {
   return "text/plain";
 }
 
+#if APP_MODE == APP_MODE_ESTOP
+static bool isCrossModeUiAssetPath(const String& path) {
+  return path == "/index.html" ||
+         path == "/script.js" ||
+         path == "/settings.html" ||
+         path == "/settings.js";
+}
+#else
+static bool isCrossModeUiAssetPath(const String& path) {
+  return path == "/estop.html" ||
+         path == "/estop.js";
+}
+#endif
+
 static String getDeviceNameForMdns() {
   return getAppSettings().device_name;
 }
@@ -110,19 +124,39 @@ static void handleDeviceInfoGet() {
 }
 
 static void handleEStopStatusGet() {
+  const AppSettings& settings = getAppSettings();
+
   JsonDocument doc;
-  doc["pressed"]              = isEStopSwitchPressed();
-  doc["rawLevel"]             = getEStopSwitchRawLevel();
-  doc["switchPin"]            = getAppSettings().estop_switch_pin;
-  doc["switchActiveHigh"]     = getAppSettings().estop_switch_active_high;
-  doc["switchLogicInverted"]  = getAppSettings().estop_switch_logic_inverted;
-  doc["targetMac"]            = getAppSettings().estop_target_mac;
-  doc["targetPeerConfigured"] = isEStopPeerConfigured();
-  doc["effectiveTargetMac"]   = getEStopTargetMac();
-  doc["espNowChannel"]        = wifi_channel;
-  doc["packetsSent"]          = getEStopPacketCount();
-  doc["wledStatus"]           = getEStopWledStatus();
-  doc["wledSnapshotReady"]    = isEStopWledSnapshotReady();
+  doc["pressed"]                 = isEStopSwitchPressed();
+  doc["rawLevel"]                = getEStopSwitchRawLevel();
+  doc["switchPin"]               = settings.estop_switch_pin;
+  doc["switchActiveHigh"]        = settings.estop_switch_active_high;
+  doc["switchLogicInverted"]     = settings.estop_switch_logic_inverted;
+  doc["targetMac"]               = settings.estop_target_mac;
+  doc["targetPeerConfigured"]    = isEStopPeerConfigured();
+  doc["effectiveTargetMac"]      = getEStopTargetMac();
+  doc["espNowChannel"]           = wifi_channel;
+  doc["packetsSent"]             = getEStopPacketCount();
+  doc["wledStatus"]              = getEStopWledStatus();
+  doc["wledSnapshotReady"]       = isEStopWledSnapshotReady();
+  doc["routeCount"]              = settings.estop_routes.size();
+  doc["pressedRouteCount"]       = getEStopPressedRouteCount();
+  doc["configuredPeerCount"]     = getEStopConfiguredPeerCount();
+
+  JsonArray routes = doc["routes"].to<JsonArray>();
+  const size_t routeCount = settings.estop_routes.size();
+  for (size_t i = 0; i < routeCount; ++i) {
+    JsonObject route = routes.add<JsonObject>();
+    route["index"] = i;
+    route["switchPin"] = settings.estop_routes[i].switch_pin;
+    route["switchActiveHigh"] = settings.estop_routes[i].switch_active_high;
+    route["switchLogicInverted"] = settings.estop_routes[i].switch_logic_inverted;
+    route["targetMac"] = settings.estop_routes[i].target_mac;
+    route["pressed"] = isEStopRoutePressed(i);
+    route["rawLevel"] = getEStopRouteRawLevel(i);
+    route["peerConfigured"] = isEStopRoutePeerConfigured(i);
+    route["effectiveTargetMac"] = getEStopRouteEffectiveTargetMac(i);
+  }
 
   String output;
   serializeJson(doc, output);
@@ -193,6 +227,97 @@ static bool applySettingsUpdate(const JsonObjectConst& updateObj, String& update
   }
   return true;
 }
+
+#if APP_MODE == APP_MODE_ESTOP
+static void copyJsonKeyIfPresent(const JsonObjectConst& src, JsonObject& dst, const char* key) {
+  if (src[key].isNull()) {
+    return;
+  }
+  dst[key] = src[key];
+}
+
+static void buildEStopSettingsResponsePayload(JsonDocument& payload, bool includePinCode) {
+  (void)includePinCode;
+  const AppSettings& settings = getAppSettings();
+
+  payload["estopTargetMac"]           = settings.estop_target_mac;
+  payload["estopSwitchPin"]           = settings.estop_switch_pin;
+  payload["estopSwitchActiveHigh"]    = settings.estop_switch_active_high;
+  payload["estopSwitchLogicInverted"] = settings.estop_switch_logic_inverted;
+  payload["estopWledEnabled"]         = settings.estop_wled_enabled;
+  payload["estopWledBaseUrl"]         = settings.estop_wled_base_url;
+  payload["estopWledPreset"]          = settings.estop_wled_preset;
+  payload["estopBuzzerEnabled"]       = settings.estop_buzzer_enabled;
+  payload["estopBuzzerPin"]           = settings.estop_buzzer_pin;
+
+  JsonArray routes = payload["estopRoutes"].to<JsonArray>();
+  for (const auto& route : settings.estop_routes) {
+    JsonObject routeObj = routes.add<JsonObject>();
+    routeObj["targetMac"] = route.target_mac;
+    routeObj["switchPin"] = route.switch_pin;
+    routeObj["switchActiveHigh"] = route.switch_active_high;
+    routeObj["switchLogicInverted"] = route.switch_logic_inverted;
+  }
+}
+
+static void handleEStopSettingsReadPost() {
+  JsonDocument jsonObj;
+  String parseError;
+  if (!parseJsonBody(jsonObj, parseError)) {
+    server.send(400, "application/json", buildSettingsResponse(false, parseError));
+    return;
+  }
+
+  if (!authorizeSettingsRequest(jsonObj.as<JsonObjectConst>())) {
+    server.send(403, "application/json", buildSettingsResponse(false, "Invalid PIN"));
+    return;
+  }
+
+  JsonDocument payload;
+  buildEStopSettingsResponsePayload(payload, false);
+  payload["pinRequired"] = getAppSettings().pin_protection_enabled;
+
+  String output;
+  serializeJson(payload, output);
+  server.send(200, "application/json", output);
+}
+
+static void handleEStopSettingsPost() {
+  JsonDocument jsonObj;
+  String parseError;
+  if (!parseJsonBody(jsonObj, parseError)) {
+    server.send(400, "application/json", buildSettingsResponse(false, parseError));
+    return;
+  }
+
+  const JsonObjectConst root = jsonObj.as<JsonObjectConst>();
+  if (!authorizeSettingsRequest(root)) {
+    server.send(403, "application/json", buildSettingsResponse(false, "Invalid PIN"));
+    return;
+  }
+
+  JsonDocument updateDoc;
+  JsonObject updateObj = updateDoc.to<JsonObject>();
+  copyJsonKeyIfPresent(root, updateObj, "estopTargetMac");
+  copyJsonKeyIfPresent(root, updateObj, "estopSwitchPin");
+  copyJsonKeyIfPresent(root, updateObj, "estopSwitchActiveHigh");
+  copyJsonKeyIfPresent(root, updateObj, "estopSwitchLogicInverted");
+  copyJsonKeyIfPresent(root, updateObj, "estopRoutes");
+  copyJsonKeyIfPresent(root, updateObj, "estopWledEnabled");
+  copyJsonKeyIfPresent(root, updateObj, "estopWledBaseUrl");
+  copyJsonKeyIfPresent(root, updateObj, "estopWledPreset");
+  copyJsonKeyIfPresent(root, updateObj, "estopBuzzerEnabled");
+  copyJsonKeyIfPresent(root, updateObj, "estopBuzzerPin");
+
+  String updateError;
+  if (!applySettingsUpdate(updateObj, updateError)) {
+    server.send(400, "application/json", buildSettingsResponse(false, updateError));
+    return;
+  }
+
+  server.send(200, "application/json", buildSettingsResponse(true, "E-STOP settings updated"));
+}
+#endif
 
 static void handlePowerPost() {
   bool updated = false;
@@ -463,6 +588,14 @@ void initWebServer() {
 #endif
   });
 
+  server.on("/health", HTTP_GET, []() {
+    server.send(200, "text/plain", "ok");
+  });
+
+  server.on("/device", HTTP_GET, handleDeviceInfoGet);
+#if APP_MODE == APP_MODE_ESTOP
+  server.on("/estop/status", HTTP_GET, handleEStopStatusGet);
+#else
   server.on("/readings", HTTP_GET, []() {
     server.send(200, "application/json", getSensorReadings());
   });
@@ -471,23 +604,14 @@ void initWebServer() {
     server.send(200, "application/json", telemetryLogGetJson());
   });
 
-  server.on("/health", HTTP_GET, []() {
-    server.send(200, "text/plain", "ok");
-  });
-
-  server.on("/device", HTTP_GET, handleDeviceInfoGet);
-  server.on("/estop/status", HTTP_GET, handleEStopStatusGet);
-
-#if APP_MODE == APP_MODE_ESTOP
-  server.on("/settings.html", HTTP_GET, []() {
-    if (!sendFileFromSPIFFS("/estop.html")) {
-      server.send(404, "text/plain", "estop.html not found");
-    }
-  });
-#endif
-
   server.on("/power", HTTP_POST, handlePowerPost);
   server.on("/emergency", HTTP_POST, handleEmergencyPost);
+#endif
+
+#if APP_MODE == APP_MODE_ESTOP
+  server.on("/estop/settings/read", HTTP_POST, handleEStopSettingsReadPost);
+  server.on("/estop/settings", HTTP_POST, handleEStopSettingsPost);
+#else
   server.on("/settings", HTTP_GET, []() {
     server.send(405, "application/json", buildSettingsResponse(false, "GET /settings is disabled"));
   });
@@ -497,6 +621,7 @@ void initWebServer() {
   server.on("/settings/import", HTTP_POST, handleSettingsImportPost);
   server.on("/settings/unlock", HTTP_POST, handleSettingsUnlockPost);
   server.on("/settings/reset", HTTP_POST, handleSettingsResetPost);
+#endif
   server.on("/esp/reboot", HTTP_POST, handleEspRebootPost);
 
   server.onNotFound([]() {
@@ -523,25 +648,19 @@ void initWebServer() {
 #endif
     }
 
+    // Never expose the other app mode's UI pages even if assets exist in SPIFFS.
+    if (isCrossModeUiAssetPath(path)) {
+      server.sendHeader("Location", "/", true);
+      server.send(302, "text/plain", "");
+      return;
+    }
+
     if (sendFileFromSPIFFS(path)) {
       return;
     }
-
-    // Fallback to index for extension-less paths to reduce accidental 404s.
-    const int lastSlash = path.lastIndexOf('/');
-    const int lastDot = path.lastIndexOf('.');
-    const bool hasExtension = (lastDot > lastSlash);
-    if (!hasExtension &&
-#if APP_MODE == APP_MODE_ESTOP
-        sendFileFromSPIFFS("/estop.html")) {
-#else
-        sendFileFromSPIFFS("/index.html")) {
-#endif
-      return;
-    }
-
-    DAEMON_LOGF("HTTP request not found: %s\n", path.c_str());
-    server.send(404, "text/plain", "Not found");
+    DAEMON_LOGF("HTTP request not found, redirecting to /: %s\n", path.c_str());
+    server.sendHeader("Location", "/", true);
+    server.send(302, "text/plain", "");
   });
 
   ElegantOTA.begin(&server);

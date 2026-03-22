@@ -9,6 +9,7 @@ namespace {
 
 const char* kSettingsPath = "/settings.json";
 constexpr size_t   kMaxEmergencyMacs      = 16;
+constexpr size_t   kMaxEStopRoutes        = 16;
 constexpr uint8_t  kEspNowChannelMin      = 1;
 constexpr uint8_t  kEspNowChannelMax      = 13;
 constexpr uint8_t  kEspNowChannelDefault  = 6;
@@ -38,6 +39,60 @@ constexpr size_t kWledUrlMaxLen           = 192;
 constexpr const char* kDefaultControlPanelUrl = "https://scx.tw/links";
 
 AppSettings g_settings;
+
+EStopRouteConfig buildDefaultEStopRoute() {
+  EStopRouteConfig route = {};
+  route.target_mac = "";
+  route.switch_pin = 4;
+  route.switch_active_high = false;
+  route.switch_logic_inverted = false;
+  return route;
+}
+
+void normalizeEStopRoute(EStopRouteConfig& route) {
+  route.target_mac.replace("-", ":");
+  route.target_mac.trim();
+  route.target_mac.toLowerCase();
+  if (route.target_mac.length() == 0) {
+    return;
+  }
+
+  std::array<uint8_t, 6> parsedMac = {};
+  if (parseMacString(route.target_mac, parsedMac)) {
+    route.target_mac = toMacString(parsedMac);
+  }
+}
+
+void syncLegacyEStopFieldsFromRoutes() {
+  if (g_settings.estop_routes.empty()) {
+    const EStopRouteConfig route = buildDefaultEStopRoute();
+    g_settings.estop_target_mac = route.target_mac;
+    g_settings.estop_switch_pin = route.switch_pin;
+    g_settings.estop_switch_active_high = route.switch_active_high;
+    g_settings.estop_switch_logic_inverted = route.switch_logic_inverted;
+    return;
+  }
+
+  const EStopRouteConfig& primary = g_settings.estop_routes.front();
+  g_settings.estop_target_mac = primary.target_mac;
+  g_settings.estop_switch_pin = primary.switch_pin;
+  g_settings.estop_switch_active_high = primary.switch_active_high;
+  g_settings.estop_switch_logic_inverted = primary.switch_logic_inverted;
+}
+
+void syncRoutesFromLegacyEStopFields() {
+  g_settings.estop_routes.clear();
+
+  EStopRouteConfig route = {};
+  route.target_mac = g_settings.estop_target_mac;
+  route.switch_pin = g_settings.estop_switch_pin;
+  route.switch_active_high = g_settings.estop_switch_active_high;
+  route.switch_logic_inverted = g_settings.estop_switch_logic_inverted;
+  normalizeEStopRoute(route);
+  g_settings.estop_routes.push_back(route);
+
+  syncLegacyEStopFieldsFromRoutes();
+}
 
 String toLowerCopy(String value) {
   value.toLowerCase();
@@ -136,12 +191,15 @@ void applyDefaults() {
   g_settings.mros_ping_interval_ms = 1000;
   g_settings.espnow_channel = kEspNowChannelDefault;
   g_settings.estop_target_mac = "";
-  g_settings.estop_switch_pin = 8;
+  g_settings.estop_switch_pin = 4;
   g_settings.estop_switch_active_high = false;
   g_settings.estop_switch_logic_inverted = false;
   g_settings.estop_wled_enabled = false;
   g_settings.estop_wled_base_url = "";
   g_settings.estop_wled_preset = 1;
+  g_settings.estop_buzzer_enabled = false;
+  g_settings.estop_buzzer_pin = 5;
+  syncRoutesFromLegacyEStopFields();
 
   g_settings.emergency_switch_macs.clear();
 
@@ -241,6 +299,36 @@ bool validateControlPanelUrl(const String& url) {
   return false;
 }
 
+void loadEStopRoutes(const JsonObjectConst& json) {
+  bool hasRouteArray = false;
+  if (json["estopRoutes"].is<JsonArrayConst>()) {
+    hasRouteArray = true;
+    g_settings.estop_routes.clear();
+    for (JsonVariantConst entry : json["estopRoutes"].as<JsonArrayConst>()) {
+      if (!entry.is<JsonObjectConst>()) {
+        continue;
+      }
+      JsonObjectConst routeObj = entry.as<JsonObjectConst>();
+      EStopRouteConfig route = buildDefaultEStopRoute();
+      loadString(routeObj, "targetMac", route.target_mac);
+      loadUInt8(routeObj, "switchPin", route.switch_pin);
+      loadBool(routeObj, "switchActiveHigh", route.switch_active_high);
+      loadBool(routeObj, "switchLogicInverted", route.switch_logic_inverted);
+      normalizeEStopRoute(route);
+      g_settings.estop_routes.push_back(route);
+      if (g_settings.estop_routes.size() >= kMaxEStopRoutes) {
+        break;
+      }
+    }
+  }
+
+  if (!hasRouteArray || g_settings.estop_routes.empty()) {
+    syncRoutesFromLegacyEStopFields();
+  } else {
+    syncLegacyEStopFieldsFromRoutes();
+  }
+}
+
 void loadFromJson(const JsonObjectConst& json) {
   loadString(json, "deviceName", g_settings.device_name);
   g_settings.device_name = sanitizeDeviceName(g_settings.device_name);
@@ -302,17 +390,10 @@ void loadFromJson(const JsonObjectConst& json) {
   loadBool(json,   "estopWledEnabled",              g_settings.estop_wled_enabled);
   loadString(json, "estopWledBaseUrl",              g_settings.estop_wled_base_url);
   loadUInt16(json, "estopWledPreset",               g_settings.estop_wled_preset);
-  g_settings.estop_target_mac.replace("-", ":");
-  g_settings.estop_target_mac.trim();
-  g_settings.estop_target_mac.toLowerCase();
-  if (g_settings.estop_target_mac.length() > 0) {
-    std::array<uint8_t, 6> parsedMac = {};
-    if (parseMacString(g_settings.estop_target_mac, parsedMac)) {
-      g_settings.estop_target_mac = toMacString(parsedMac);
-    } else {
-      g_settings.estop_target_mac = "";
-    }
-  }
+  loadBool(json,   "estopBuzzerEnabled",            g_settings.estop_buzzer_enabled);
+  loadUInt8(json,  "estopBuzzerPin",                g_settings.estop_buzzer_pin);
+  syncRoutesFromLegacyEStopFields();
+  loadEStopRoutes(json);
   g_settings.estop_wled_base_url.trim();
   if (g_settings.estop_wled_base_url.endsWith("/")) {
     g_settings.estop_wled_base_url.remove(g_settings.estop_wled_base_url.length() - 1);
@@ -385,6 +466,8 @@ bool parseMacString(const String& text, std::array<uint8_t, 6>& out) {
 }
 
 void appSettingsToJson(JsonDocument& doc, bool include_pin_code) {
+  syncLegacyEStopFieldsFromRoutes();
+
   doc["deviceName"] = g_settings.device_name;
 
   doc["pinProtectionEnabled"] = g_settings.pin_protection_enabled;
@@ -437,6 +520,16 @@ void appSettingsToJson(JsonDocument& doc, bool include_pin_code) {
   doc["estopWledEnabled"]           = g_settings.estop_wled_enabled;
   doc["estopWledBaseUrl"]           = g_settings.estop_wled_base_url;
   doc["estopWledPreset"]            = g_settings.estop_wled_preset;
+  doc["estopBuzzerEnabled"]         = g_settings.estop_buzzer_enabled;
+  doc["estopBuzzerPin"]             = g_settings.estop_buzzer_pin;
+  JsonArray estopRoutes = doc["estopRoutes"].to<JsonArray>();
+  for (const auto& route : g_settings.estop_routes) {
+    JsonObject routeObj = estopRoutes.add<JsonObject>();
+    routeObj["targetMac"] = route.target_mac;
+    routeObj["switchPin"] = route.switch_pin;
+    routeObj["switchActiveHigh"] = route.switch_active_high;
+    routeObj["switchLogicInverted"] = route.switch_logic_inverted;
+  }
 
   doc["controlPanelUrl"] = g_settings.control_panel_url;
 
@@ -570,21 +663,57 @@ bool updateAppSettingsFromJson(const JsonObjectConst& json, String& error) {
   }
 
 #if APP_MODE == APP_MODE_ESTOP
-  if (g_settings.estop_switch_pin > kGpioPinMaxUi) {
+  if (g_settings.estop_routes.empty()) {
     g_settings = backup;
-    error = "estopSwitchPin must be in range 0..48";
+    error = "estopRoutes must contain at least 1 route";
     return false;
   }
 
-  if (g_settings.estop_target_mac.length() > 0) {
-    std::array<uint8_t, 6> parsedMac = {};
-    if (!parseMacString(g_settings.estop_target_mac, parsedMac)) {
+  if (g_settings.estop_routes.size() > kMaxEStopRoutes) {
+    g_settings = backup;
+    error = "estopRoutes maximum is 16";
+    return false;
+  }
+
+  for (size_t i = 0; i < g_settings.estop_routes.size(); ++i) {
+    EStopRouteConfig& route = g_settings.estop_routes[i];
+
+    if (route.switch_pin > kGpioPinMaxUi) {
       g_settings = backup;
-      error = "estopTargetMac must be a valid MAC address";
+      error = "estopRoutes[" + String(i) + "].switchPin must be in range 0..48";
       return false;
     }
-    g_settings.estop_target_mac = toMacString(parsedMac);
+
+    route.target_mac.replace("-", ":");
+    route.target_mac.trim();
+    route.target_mac.toLowerCase();
+    if (route.target_mac.length() > 0) {
+      std::array<uint8_t, 6> parsedMac = {};
+      if (!parseMacString(route.target_mac, parsedMac)) {
+        g_settings = backup;
+        error = "estopRoutes[" + String(i) + "].targetMac must be a valid MAC address";
+        return false;
+      }
+      route.target_mac = toMacString(parsedMac);
+    }
   }
+
+  for (size_t i = 0; i < g_settings.estop_routes.size(); ++i) {
+    for (size_t j = i + 1; j < g_settings.estop_routes.size(); ++j) {
+      const EStopRouteConfig& a = g_settings.estop_routes[i];
+      const EStopRouteConfig& b = g_settings.estop_routes[j];
+      if (a.switch_pin == b.switch_pin &&
+          a.switch_active_high == b.switch_active_high &&
+          a.switch_logic_inverted == b.switch_logic_inverted &&
+          a.target_mac == b.target_mac) {
+        g_settings = backup;
+        error = "Duplicate estopRoutes entries at index " + String(i) + " and " + String(j);
+        return false;
+      }
+    }
+  }
+
+  syncLegacyEStopFieldsFromRoutes();
 
   if (g_settings.estop_wled_base_url.endsWith("/")) {
     g_settings.estop_wled_base_url.remove(g_settings.estop_wled_base_url.length() - 1);
@@ -614,6 +743,22 @@ bool updateAppSettingsFromJson(const JsonObjectConst& json, String& error) {
     g_settings = backup;
     error = "estopWledPreset must be in range 1..250";
     return false;
+  }
+
+  if (g_settings.estop_buzzer_pin > kGpioPinMaxUi) {
+    g_settings = backup;
+    error = "estopBuzzerPin must be in range 0..48";
+    return false;
+  }
+
+  if (g_settings.estop_buzzer_enabled) {
+    for (size_t i = 0; i < g_settings.estop_routes.size(); ++i) {
+      if (g_settings.estop_routes[i].switch_pin == g_settings.estop_buzzer_pin) {
+        g_settings = backup;
+        error = "estopBuzzerPin conflicts with estopRoutes[" + String(i) + "].switchPin";
+        return false;
+      }
+    }
   }
 #else
   if (g_settings.battery_low_threshold < g_settings.battery_disconnect_threshold) {

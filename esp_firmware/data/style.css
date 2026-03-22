@@ -984,6 +984,97 @@ textarea:focus-visible {
   filter: brightness(1.08);
 }
 
+.estop-route-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-top: 0.2rem;
+}
+
+.estop-route-list {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.estop-route-item {
+  border-radius: 12px;
+  border: 1px solid var(--apple-separator);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 0.68rem;
+}
+
+.light-mode .estop-route-item {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.estop-route-item__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+  margin-bottom: 0.6rem;
+}
+
+.estop-route-item__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.42rem;
+  min-width: 0;
+}
+
+.estop-route-item__title {
+  font-size: 0.84rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted-text-color);
+}
+
+.estop-route-live {
+  font-size: 0.68rem;
+  padding: 0.23rem 0.54rem;
+  max-width: none;
+}
+
+.estop-route-remove {
+  flex: 0 0 auto;
+  padding: 0.32rem 0.6rem !important;
+  font-size: 0.78rem !important;
+  background-color: var(--nav-button-bg) !important;
+  color: var(--nav-button-text) !important;
+}
+
+.estop-route-remove:hover {
+  filter: brightness(1.08);
+}
+
+.estop-route-item__fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.6rem;
+}
+
+.estop-route-item__fields .field {
+  margin-bottom: 0;
+}
+
+.estop-route-item__fields .field input {
+  text-transform: uppercase;
+}
+
+.estop-route-item__fields .settings-toggle-stack {
+  margin: 0;
+}
+
+.estop-route-item__fields .settings-switch-row {
+  min-height: 2.55rem;
+  padding: 0.38rem 0.72rem;
+}
+
 .settings-card {
   padding: 0.9rem;
   text-align: left;
@@ -1289,6 +1380,40 @@ textarea:focus-visible {
   color: var(--muted-text-color);
   line-height: 1.35;
   margin-top: 0.2rem;
+}
+
+.estop-tips {
+  margin-top: 0.4rem;
+  padding: 0.62rem 0.72rem;
+  border-radius: 12px;
+  border: 1px solid var(--apple-separator);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.light-mode .estop-tips {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.estop-tips__title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-text-color);
+  margin-bottom: 0.34rem;
+}
+
+.estop-tips__list {
+  margin: 0;
+  padding-left: 1.02rem;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.estop-tips__list li {
+  font-size: 0.8rem;
+  line-height: 1.38;
+  color: var(--muted-text-color);
 }
 
 .actions {

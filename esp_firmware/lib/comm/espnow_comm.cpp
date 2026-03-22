@@ -16,6 +16,7 @@
 
 #include <array>
 #include <cstring>
+#include <vector>
 
 namespace {
 
@@ -92,31 +93,80 @@ void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* incomingData, in
 
 constexpr uint32_t kEStopSendIntervalMs = 80;
 constexpr uint32_t kEStopDebounceMs = 35;
+constexpr uint32_t kEStopPeerEnsureIntervalMs = 1000;
 constexpr uint32_t kWledRestoreRetryIntervalMs = 1000;
 constexpr uint16_t kWledHttpTimeoutMs = 1500;
 constexpr size_t kWledSnapshotMaxBytes = 4096;
 constexpr char kEStopPayload[] = "STOP";
+// Cybertruck-style boot cue + standard factory E-STOP alarm (passive buzzer approximation).
+constexpr uint16_t kBuzzerAlarmOnMs = 300;
+constexpr uint16_t kBuzzerAlarmOffMs = 240;
+constexpr uint16_t kBuzzerAlarmFreqAHz = 1150;
+constexpr uint16_t kBuzzerAlarmFreqBHz = 1150;
+constexpr uint16_t kBuzzerPwmAttachFreqHz = 2000;
+constexpr uint8_t kBuzzerPwmResolutionBits = 8;
+constexpr uint8_t kBuzzerPwmDuty = 127;
 
+struct BuzzerToneStep {
+  uint16_t holdMs;
+  uint16_t freqHz;
+};
+
+constexpr BuzzerToneStep kBuzzerStartupPattern[] = {
+  // Modern factory-style boot cue: short stepped rise + confirmation tail.
+  {78, 880},
+  {26, 0},
+  {82, 1175},
+  {28, 0},
+  {92, 1568},
+  {34, 0},
+  {148, 1319}
+};
+
+struct EStopRouteRuntime {
+  std::array<uint8_t, 6> targetMac = {0, 0, 0, 0, 0, 0};
+  String targetMacText;
+  uint8_t switchPin = 0;
+  bool switchActiveHigh = false;
+  bool switchLogicInverted = false;
+  int rawLevel = HIGH;
+  int lastObservedRawLevel = HIGH;
+  unsigned long rawChangedAtMs = 0;
+  bool debounceInitialized = false;
+  bool pressed = false;
+  bool peerConfigured = false;
+};
+
+std::vector<EStopRouteRuntime> g_estopRoutes;
+String g_estopRouteSignature;
 bool g_estopSwitchPressed = false;
+size_t g_estopPressedRouteCount = 0;
 int g_estopSwitchRawLevel = HIGH;
-int g_estopLastObservedRawLevel = HIGH;
-unsigned long g_estopRawChangedAtMs = 0;
-bool g_estopDebounceInitialized = false;
-bool g_estopEdgeInitialized = false;
-bool g_estopLastStablePressed = false;
 uint32_t g_estopPacketCount = 0;
 unsigned long g_lastEStopSendMs = 0;
-bool g_estopPeerConfigured = false;
-std::array<uint8_t, 6> g_estopPeerMac = {0, 0, 0, 0, 0, 0};
-String g_estopPeerMacText;
-uint8_t g_estopSwitchPinConfigured = 255;
-bool g_estopSwitchActiveHighConfigured = false;
-bool g_estopSwitchLogicInvertedConfigured = false;
+unsigned long g_lastPeerEnsureMs = 0;
 bool g_wledSnapshotValid = false;
 bool g_wledRestorePending = false;
 unsigned long g_wledLastRestoreAttemptMs = 0;
 String g_wledSnapshotJson;
 String g_wledStatus = "disabled";
+
+enum class BuzzerMode : uint8_t {
+  Off = 0,
+  StartupTone,
+  Alarm
+};
+
+uint8_t g_buzzerPinConfigured = 255;
+bool g_buzzerEnabledConfigured = false;
+bool g_buzzerPwmAttached = false;
+bool g_buzzerOutputOn = false;
+BuzzerMode g_buzzerMode = BuzzerMode::Off;
+bool g_buzzerAlarmUseAltTone = false;
+unsigned long g_buzzerPhaseStartedAtMs = 0;
+size_t g_buzzerStartupStep = 0;
+bool g_startupTonePlayed = false;
+bool g_wifiConnectedPrev = false;
 
 String normalizeWledBaseUrl() {
   String url = getAppSettings().estop_wled_base_url;
@@ -280,147 +330,370 @@ void handleWledReleasedEdge() {
   tryRestoreWledState();
 }
 
-void handleEStopSwitchEdge(bool pressed) {
-  if (pressed) {
-    handleWledPressedEdge();
-  } else {
-    handleWledReleasedEdge();
-  }
-}
-
-void configureEStopSwitchPin(bool forceReconfigure) {
-  const AppSettings& settings = getAppSettings();
-  if (!forceReconfigure &&
-      settings.estop_switch_pin == g_estopSwitchPinConfigured &&
-      settings.estop_switch_active_high == g_estopSwitchActiveHighConfigured &&
-      settings.estop_switch_logic_inverted == g_estopSwitchLogicInvertedConfigured) {
+void stopBuzzerOutput() {
+  if (!g_buzzerEnabledConfigured || g_buzzerPinConfigured > 48) {
     return;
   }
 
-  g_estopSwitchPinConfigured = settings.estop_switch_pin;
-  g_estopSwitchActiveHighConfigured = settings.estop_switch_active_high;
-  g_estopSwitchLogicInvertedConfigured = settings.estop_switch_logic_inverted;
+  if (g_buzzerPwmAttached) {
+    ledcWriteTone(g_buzzerPinConfigured, 0);
+    ledcWrite(g_buzzerPinConfigured, 0);
+  } else {
+    digitalWrite(g_buzzerPinConfigured, LOW);
+  }
+}
 
+void playBuzzerTone(uint16_t freqHz) {
+  if (!g_buzzerEnabledConfigured || g_buzzerPinConfigured > 48) {
+    return;
+  }
+
+  if (freqHz == 0) {
+    stopBuzzerOutput();
+    return;
+  }
+
+  if (g_buzzerPwmAttached) {
+    ledcWriteTone(g_buzzerPinConfigured, freqHz);
+    ledcWrite(g_buzzerPinConfigured, kBuzzerPwmDuty);
+  } else {
+    digitalWrite(g_buzzerPinConfigured, HIGH);
+  }
+}
+
+void updateWledForAggregateSwitchState(bool pressed) {
+  if (pressed) {
+    if (g_buzzerEnabledConfigured) {
+      g_buzzerMode = BuzzerMode::Alarm;
+      g_buzzerPhaseStartedAtMs = millis();
+      g_buzzerAlarmUseAltTone = false;
+      g_buzzerOutputOn = true;
+      playBuzzerTone(kBuzzerAlarmFreqAHz);
+      g_buzzerAlarmUseAltTone = true;
+    }
+    handleWledPressedEdge();
+    return;
+  }
+  if (g_buzzerMode == BuzzerMode::Alarm) {
+    g_buzzerMode = BuzzerMode::Off;
+    stopBuzzerOutput();
+    g_buzzerOutputOn = false;
+    g_buzzerStartupStep = 0;
+    g_buzzerAlarmUseAltTone = false;
+  }
+  handleWledReleasedEdge();
+}
+
+void applyBuzzerConfig(bool forceReconfigure) {
+  const AppSettings& settings = getAppSettings();
+  if (!forceReconfigure &&
+      settings.estop_buzzer_enabled == g_buzzerEnabledConfigured &&
+      settings.estop_buzzer_pin == g_buzzerPinConfigured) {
+    return;
+  }
+
+  const uint8_t prevPin = g_buzzerPinConfigured;
+  if (g_buzzerEnabledConfigured && prevPin <= 48) {
+    if (g_buzzerPwmAttached) {
+      ledcWriteTone(prevPin, 0);
+      ledcWrite(prevPin, 0);
+      ledcDetach(prevPin);
+    }
+    pinMode(prevPin, OUTPUT);
+    digitalWrite(prevPin, LOW);
+  }
+
+  g_buzzerEnabledConfigured = settings.estop_buzzer_enabled;
+  g_buzzerPinConfigured = settings.estop_buzzer_pin;
+  g_buzzerPwmAttached = false;
+  g_buzzerOutputOn = false;
+  g_buzzerMode = BuzzerMode::Off;
+  g_buzzerAlarmUseAltTone = false;
+  g_buzzerStartupStep = 0;
+
+  if (!g_buzzerEnabledConfigured || g_buzzerPinConfigured > 48) {
+    g_buzzerEnabledConfigured = false;
+    return;
+  }
+
+  pinMode(g_buzzerPinConfigured, OUTPUT);
+  digitalWrite(g_buzzerPinConfigured, LOW);
+  g_buzzerPwmAttached = ledcAttach(g_buzzerPinConfigured, kBuzzerPwmAttachFreqHz, kBuzzerPwmResolutionBits);
+  if (!g_buzzerPwmAttached) {
+    DAEMON_LOGF("Buzzer PWM attach failed on GPIO %u; fallback to digital pulses\n",
+                static_cast<unsigned>(g_buzzerPinConfigured));
+  }
+}
+
+void startStartupTone() {
+  if (!g_buzzerEnabledConfigured) {
+    return;
+  }
+
+  const size_t startupLen = sizeof(kBuzzerStartupPattern) / sizeof(kBuzzerStartupPattern[0]);
+  if (startupLen == 0) {
+    return;
+  }
+
+  g_buzzerMode = BuzzerMode::StartupTone;
+  g_buzzerStartupStep = 0;
+  g_buzzerPhaseStartedAtMs = millis();
+  g_buzzerOutputOn = (kBuzzerStartupPattern[0].freqHz > 0);
+  playBuzzerTone(kBuzzerStartupPattern[0].freqHz);
+}
+
+void updateBuzzer() {
+  applyBuzzerConfig(false);
+
+  const bool wifiConnected = (WiFi.status() == WL_CONNECTED);
+  if (!g_startupTonePlayed && wifiConnected && !g_wifiConnectedPrev) {
+    // Safety priority: never replace an active E-STOP alarm with startup tone.
+    if (!g_estopSwitchPressed && g_buzzerMode != BuzzerMode::Alarm) {
+      startStartupTone();
+    }
+    g_startupTonePlayed = true;
+  }
+  g_wifiConnectedPrev = wifiConnected;
+
+  if (!g_buzzerEnabledConfigured) {
+    return;
+  }
+
+  const unsigned long now = millis();
+  if (g_buzzerMode == BuzzerMode::Alarm) {
+    const uint16_t holdMs = g_buzzerOutputOn ? kBuzzerAlarmOnMs : kBuzzerAlarmOffMs;
+    if ((now - g_buzzerPhaseStartedAtMs) >= holdMs) {
+      g_buzzerOutputOn = !g_buzzerOutputOn;
+      g_buzzerPhaseStartedAtMs = now;
+      if (g_buzzerOutputOn) {
+        const uint16_t freq = g_buzzerAlarmUseAltTone ? kBuzzerAlarmFreqBHz : kBuzzerAlarmFreqAHz;
+        g_buzzerAlarmUseAltTone = !g_buzzerAlarmUseAltTone;
+        playBuzzerTone(freq);
+      } else {
+        stopBuzzerOutput();
+      }
+    }
+    return;
+  }
+
+  if (g_buzzerMode == BuzzerMode::StartupTone) {
+    const size_t startupLen = sizeof(kBuzzerStartupPattern) / sizeof(kBuzzerStartupPattern[0]);
+    if (g_buzzerStartupStep >= startupLen) {
+      g_buzzerMode = BuzzerMode::Off;
+      g_buzzerOutputOn = false;
+      stopBuzzerOutput();
+      return;
+    }
+
+    const uint16_t holdMs = kBuzzerStartupPattern[g_buzzerStartupStep].holdMs;
+    if ((now - g_buzzerPhaseStartedAtMs) < holdMs) {
+      return;
+    }
+
+    g_buzzerStartupStep++;
+    g_buzzerPhaseStartedAtMs = now;
+
+    if (g_buzzerStartupStep >= startupLen) {
+      g_buzzerMode = BuzzerMode::Off;
+      g_buzzerOutputOn = false;
+      stopBuzzerOutput();
+      return;
+    }
+
+    const uint16_t freq = kBuzzerStartupPattern[g_buzzerStartupStep].freqHz;
+    g_buzzerOutputOn = (freq > 0);
+    playBuzzerTone(freq);
+  }
+}
+
+String buildRouteSignature() {
+  String signature;
+  signature.reserve(64);
+  const auto& routes = getAppSettings().estop_routes;
+  for (const auto& route : routes) {
+    signature += route.target_mac;
+    signature += "|";
+    signature += String(route.switch_pin);
+    signature += "|";
+    signature += route.switch_active_high ? "1" : "0";
+    signature += "|";
+    signature += route.switch_logic_inverted ? "1" : "0";
+    signature += ";";
+  }
+  return signature;
+}
+
+void clearRoutePeers() {
+  if (!g_espnowReady) {
+    for (auto& route : g_estopRoutes) {
+      route.peerConfigured = false;
+    }
+    return;
+  }
+
+  for (auto& route : g_estopRoutes) {
+    if (route.peerConfigured && route.targetMacText.length() > 0) {
+      esp_now_del_peer(route.targetMac.data());
+    }
+    route.peerConfigured = false;
+  }
+}
+
+void configureRoutePin(const EStopRouteRuntime& route) {
   // Use internal pulls in both polarities to avoid floating GPIO noise:
   // - active-low  -> INPUT_PULLUP  (pressed shorts to GND)
   // - active-high -> INPUT_PULLDOWN (pressed drives to 3V3)
-  const uint8_t mode = settings.estop_switch_active_high ? INPUT_PULLDOWN : INPUT_PULLUP;
-  pinMode(settings.estop_switch_pin, mode);
-
-  // Reset debounce state after pin/logic changes.
-  g_estopDebounceInitialized = false;
-  g_estopEdgeInitialized = false;
+  const uint8_t mode = route.switchActiveHigh ? INPUT_PULLDOWN : INPUT_PULLUP;
+  pinMode(route.switchPin, mode);
 }
 
-void sampleEStopSwitch() {
-  configureEStopSwitchPin(false);
-
-  const AppSettings& settings = getAppSettings();
-  const unsigned long now = millis();
-  const int raw = digitalRead(settings.estop_switch_pin);
-
-  if (!g_estopDebounceInitialized) {
-    g_estopDebounceInitialized = true;
-    g_estopSwitchRawLevel = raw;
-    g_estopLastObservedRawLevel = raw;
-    g_estopRawChangedAtMs = now;
-  }
-
-  if (raw != g_estopLastObservedRawLevel) {
-    g_estopLastObservedRawLevel = raw;
-    g_estopRawChangedAtMs = now;
-  }
-
-  if ((now - g_estopRawChangedAtMs) >= kEStopDebounceMs) {
-    g_estopSwitchRawLevel = g_estopLastObservedRawLevel;
-  }
-
-  const bool basePressed =
-    (g_estopSwitchRawLevel == (settings.estop_switch_active_high ? HIGH : LOW));
-  g_estopSwitchPressed = settings.estop_switch_logic_inverted ? !basePressed : basePressed;
-
-  if (!g_estopEdgeInitialized) {
-    g_estopEdgeInitialized = true;
-    g_estopLastStablePressed = g_estopSwitchPressed;
-    return;
-  }
-
-  if (g_estopSwitchPressed != g_estopLastStablePressed) {
-    g_estopLastStablePressed = g_estopSwitchPressed;
-    handleEStopSwitchEdge(g_estopSwitchPressed);
-  }
-}
-
-void clearEStopPeer(bool verboseLog) {
-  if (g_estopPeerConfigured) {
-    esp_now_del_peer(g_estopPeerMac.data());
-  }
-  g_estopPeerConfigured = false;
-  g_estopPeerMac = {0, 0, 0, 0, 0, 0};
-  g_estopPeerMacText = "";
-
-  if (verboseLog) {
-    DAEMON_LOGLN("ESP-NOW E-stop peer cleared");
-  }
-}
-
-bool ensureEStopPeerConfigured(bool verboseLog) {
+bool ensureRoutePeerConfigured(EStopRouteRuntime& route, bool verboseLog) {
   if (!g_espnowReady) {
+    route.peerConfigured = false;
     return false;
   }
 
-  String configuredMacText = getAppSettings().estop_target_mac;
-  configuredMacText.trim();
-
-  if (configuredMacText.length() == 0) {
-    clearEStopPeer(verboseLog);
+  if (route.targetMacText.length() == 0) {
+    route.peerConfigured = false;
     return false;
   }
 
-  std::array<uint8_t, 6> parsedMac = {};
-  if (!parseMacString(configuredMacText, parsedMac)) {
-    clearEStopPeer(verboseLog);
-    if (verboseLog) {
-      DAEMON_LOGF("ESP-NOW E-stop peer MAC invalid: %s\n", configuredMacText.c_str());
-    }
-    return false;
-  }
-
-  const String normalizedMacText = toMacString(parsedMac);
-  if (g_estopPeerConfigured && memcmp(g_estopPeerMac.data(), parsedMac.data(), 6) == 0) {
-    g_estopPeerMacText = normalizedMacText;
+  if (esp_now_is_peer_exist(route.targetMac.data())) {
+    route.peerConfigured = true;
     return true;
   }
 
-  clearEStopPeer(false);
-
-  if (esp_now_is_peer_exist(parsedMac.data())) {
-    esp_now_del_peer(parsedMac.data());
-  }
-
   esp_now_peer_info_t peerInfo = {};
-  memcpy(peerInfo.peer_addr, parsedMac.data(), 6);
+  memcpy(peerInfo.peer_addr, route.targetMac.data(), 6);
   peerInfo.channel = 0;
   peerInfo.ifidx = WIFI_IF_STA;
   peerInfo.encrypt = false;
 
   const esp_err_t addErr = esp_now_add_peer(&peerInfo);
   if (addErr != ESP_OK) {
+    route.peerConfigured = false;
     if (verboseLog) {
-      DAEMON_LOGF("ESP-NOW E-stop add peer failed (%d)\n", static_cast<int>(addErr));
+      DAEMON_LOGF("ESP-NOW E-stop add peer failed (%d) for %s\n",
+                  static_cast<int>(addErr), route.targetMacText.c_str());
     }
     return false;
   }
 
-  g_estopPeerConfigured = true;
-  g_estopPeerMac = parsedMac;
-  g_estopPeerMacText = normalizedMacText;
-
+  route.peerConfigured = true;
   if (verboseLog) {
-    DAEMON_LOGF("ESP-NOW E-stop peer configured: %s\n", g_estopPeerMacText.c_str());
+    DAEMON_LOGF("ESP-NOW E-stop peer configured: %s\n", route.targetMacText.c_str());
+  }
+  return true;
+}
+
+void ensureAllRoutePeersConfigured(bool verboseLog) {
+  for (auto& route : g_estopRoutes) {
+    ensureRoutePeerConfigured(route, verboseLog);
+  }
+}
+
+void rebuildEStopRoutesFromSettings(bool verboseLog) {
+  const String signature = buildRouteSignature();
+  if (signature == g_estopRouteSignature) {
+    return;
   }
 
-  return true;
+  clearRoutePeers();
+  g_estopRoutes.clear();
+
+  for (const auto& routeCfg : getAppSettings().estop_routes) {
+    EStopRouteRuntime route = {};
+    route.switchPin = routeCfg.switch_pin;
+    route.switchActiveHigh = routeCfg.switch_active_high;
+    route.switchLogicInverted = routeCfg.switch_logic_inverted;
+    route.rawLevel = route.switchActiveHigh ? LOW : HIGH;
+    route.lastObservedRawLevel = route.rawLevel;
+
+    std::array<uint8_t, 6> parsedMac = {};
+    if (parseMacString(routeCfg.target_mac, parsedMac)) {
+      route.targetMac = parsedMac;
+      route.targetMacText = toMacString(parsedMac);
+    }
+
+    configureRoutePin(route);
+    g_estopRoutes.push_back(route);
+  }
+
+  g_estopSwitchPressed = false;
+  g_estopPressedRouteCount = 0;
+  g_estopSwitchRawLevel = HIGH;
+  g_estopRouteSignature = signature;
+  g_lastPeerEnsureMs = 0;
+
+  if (g_espnowReady) {
+    ensureAllRoutePeersConfigured(verboseLog);
+  }
+
+  if (verboseLog) {
+    DAEMON_LOGF("ESP-NOW E-stop routes loaded: %d\n", static_cast<int>(g_estopRoutes.size()));
+  }
+}
+
+void sampleEStopSwitches() {
+  rebuildEStopRoutesFromSettings(false);
+  if (g_estopRoutes.empty()) {
+    g_estopSwitchPressed = false;
+    g_estopPressedRouteCount = 0;
+    g_estopSwitchRawLevel = HIGH;
+    return;
+  }
+
+  const unsigned long now = millis();
+  size_t pressedCount = 0;
+
+  for (auto& route : g_estopRoutes) {
+    const int raw = digitalRead(route.switchPin);
+
+    if (!route.debounceInitialized) {
+      route.debounceInitialized = true;
+      route.rawLevel = raw;
+      route.lastObservedRawLevel = raw;
+      route.rawChangedAtMs = now;
+    }
+
+    if (raw != route.lastObservedRawLevel) {
+      route.lastObservedRawLevel = raw;
+      route.rawChangedAtMs = now;
+    }
+
+    if ((now - route.rawChangedAtMs) >= kEStopDebounceMs) {
+      route.rawLevel = route.lastObservedRawLevel;
+    }
+
+    const bool basePressed = (route.rawLevel == (route.switchActiveHigh ? HIGH : LOW));
+    route.pressed = route.switchLogicInverted ? !basePressed : basePressed;
+    if (route.pressed) {
+      pressedCount++;
+    }
+  }
+
+  const bool previousPressed = g_estopSwitchPressed;
+  g_estopPressedRouteCount = pressedCount;
+  g_estopSwitchPressed = (pressedCount > 0);
+  g_estopSwitchRawLevel = g_estopRoutes.front().rawLevel;
+
+  if (previousPressed != g_estopSwitchPressed) {
+    updateWledForAggregateSwitchState(g_estopSwitchPressed);
+  }
+
+  if (g_espnowReady && (now - g_lastPeerEnsureMs) >= kEStopPeerEnsureIntervalMs) {
+    g_lastPeerEnsureMs = now;
+    ensureAllRoutePeersConfigured(false);
+  }
+}
+
+bool hasMacInList(const std::vector<std::array<uint8_t, 6>>& macs, const std::array<uint8_t, 6>& target) {
+  for (const auto& mac : macs) {
+    if (memcmp(mac.data(), target.data(), 6) == 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void sendEStopIfPressed() {
@@ -438,25 +711,73 @@ void sendEStopIfPressed() {
   }
   g_lastEStopSendMs = now;
 
-  if (!ensureEStopPeerConfigured(false)) {
-    return;
-  }
+  std::vector<std::array<uint8_t, 6>> sentTargets;
+  sentTargets.reserve(g_estopRoutes.size());
 
-  const esp_err_t sendErr = esp_now_send(
-    g_estopPeerMac.data(),
-    reinterpret_cast<const uint8_t*>(kEStopPayload),
-    sizeof(kEStopPayload) - 1);
-
-  if (sendErr == ESP_OK) {
-    if (g_estopPacketCount < 0xFFFFFFFFUL) {
-      g_estopPacketCount++;
+  for (auto& route : g_estopRoutes) {
+    if (!route.pressed) {
+      continue;
     }
-    return;
-  }
+    if (!ensureRoutePeerConfigured(route, false)) {
+      continue;
+    }
+    if (hasMacInList(sentTargets, route.targetMac)) {
+      continue;
+    }
 
-  if (sendErr == ESP_ERR_ESPNOW_NOT_FOUND) {
-    g_estopPeerConfigured = false;
+    const esp_err_t sendErr = esp_now_send(
+      route.targetMac.data(),
+      reinterpret_cast<const uint8_t*>(kEStopPayload),
+      sizeof(kEStopPayload) - 1);
+
+    if (sendErr == ESP_OK) {
+      sentTargets.push_back(route.targetMac);
+      if (g_estopPacketCount < 0xFFFFFFFFUL) {
+        g_estopPacketCount++;
+      }
+      continue;
+    }
+
+    if (sendErr == ESP_ERR_ESPNOW_NOT_FOUND) {
+      route.peerConfigured = false;
+    }
   }
+}
+
+size_t countConfiguredPeers() {
+  size_t count = 0;
+  for (const auto& route : g_estopRoutes) {
+    if (route.peerConfigured && route.targetMacText.length() > 0) {
+      count++;
+    }
+  }
+  return count;
+}
+
+String firstConfiguredPeerMac() {
+  for (const auto& route : g_estopRoutes) {
+    if (route.peerConfigured && route.targetMacText.length() > 0) {
+      return route.targetMacText;
+    }
+  }
+  return String();
+}
+
+String configuredOrRequestedMac(size_t index) {
+  if (index >= g_estopRoutes.size()) {
+    return String();
+  }
+  return g_estopRoutes[index].targetMacText;
+}
+
+String configuredPeerMac(size_t index) {
+  if (index >= g_estopRoutes.size()) {
+    return String();
+  }
+  if (!g_estopRoutes[index].peerConfigured) {
+    return String();
+  }
+  return g_estopRoutes[index].targetMacText;
 }
 
 #endif
@@ -467,15 +788,19 @@ void initESPNow() {
   if (!getAppSettings().runtime_espnow_enabled) {
     DAEMON_LOGLN("ESP-NOW disabled by runtime settings");
 #if APP_MODE == APP_MODE_ESTOP
-    configureEStopSwitchPin(true);
-    sampleEStopSwitch();
+    applyBuzzerConfig(true);
+    rebuildEStopRoutesFromSettings(true);
+    sampleEStopSwitches();
+    updateBuzzer();
 #endif
     return;
   }
 
 #if APP_MODE == APP_MODE_ESTOP
-  configureEStopSwitchPin(true);
-  sampleEStopSwitch();
+  applyBuzzerConfig(true);
+  rebuildEStopRoutesFromSettings(true);
+  sampleEStopSwitches();
+  updateBuzzer();
   g_wledStatus = wledControlEnabled() ? "ready" : "disabled";
 #endif
 
@@ -496,8 +821,8 @@ void initESPNow() {
   DAEMON_LOGF("ESP-NOW receiver initialized (allowed emergency switches: %d)\n",
               static_cast<int>(getAppSettings().emergency_switch_macs.size()));
 #else
-  ensureEStopPeerConfigured(true);
-  DAEMON_LOGLN("ESP-NOW E-stop sender initialized");
+  ensureAllRoutePeersConfigured(true);
+  DAEMON_LOGF("ESP-NOW E-stop sender initialized (routes=%d)\n", static_cast<int>(g_estopRoutes.size()));
 #endif
 }
 
@@ -509,8 +834,10 @@ void refreshESPNowChannel() {
   applyEspNowChannel(true);
 
 #if APP_MODE == APP_MODE_ESTOP
+  applyBuzzerConfig(false);
+  rebuildEStopRoutesFromSettings(true);
   if (g_espnowReady) {
-    ensureEStopPeerConfigured(true);
+    ensureAllRoutePeersConfigured(true);
   }
 #endif
 }
@@ -519,8 +846,9 @@ void handleESPNow() {
 #if APP_MODE == APP_MODE_DAEMON
   return;
 #else
-  sampleEStopSwitch();
+  sampleEStopSwitches();
   sendEStopIfPressed();
+  updateBuzzer();
   tryRestoreWledState();
 #endif
 }
@@ -551,7 +879,7 @@ uint32_t getEStopPacketCount() {
 
 bool isEStopPeerConfigured() {
 #if APP_MODE == APP_MODE_ESTOP
-  return g_estopPeerConfigured;
+  return countConfiguredPeers() > 0;
 #else
   return false;
 #endif
@@ -559,8 +887,86 @@ bool isEStopPeerConfigured() {
 
 String getEStopTargetMac() {
 #if APP_MODE == APP_MODE_ESTOP
-  return g_estopPeerMacText;
+  return firstConfiguredPeerMac();
 #else
+  return String();
+#endif
+}
+
+size_t getEStopRouteCount() {
+#if APP_MODE == APP_MODE_ESTOP
+  return g_estopRoutes.size();
+#else
+  return 0;
+#endif
+}
+
+size_t getEStopPressedRouteCount() {
+#if APP_MODE == APP_MODE_ESTOP
+  return g_estopPressedRouteCount;
+#else
+  return 0;
+#endif
+}
+
+size_t getEStopConfiguredPeerCount() {
+#if APP_MODE == APP_MODE_ESTOP
+  return countConfiguredPeers();
+#else
+  return 0;
+#endif
+}
+
+bool isEStopRoutePressed(size_t index) {
+#if APP_MODE == APP_MODE_ESTOP
+  if (index >= g_estopRoutes.size()) {
+    return false;
+  }
+  return g_estopRoutes[index].pressed;
+#else
+  (void)index;
+  return false;
+#endif
+}
+
+int getEStopRouteRawLevel(size_t index) {
+#if APP_MODE == APP_MODE_ESTOP
+  if (index >= g_estopRoutes.size()) {
+    return LOW;
+  }
+  return g_estopRoutes[index].rawLevel;
+#else
+  (void)index;
+  return LOW;
+#endif
+}
+
+bool isEStopRoutePeerConfigured(size_t index) {
+#if APP_MODE == APP_MODE_ESTOP
+  if (index >= g_estopRoutes.size()) {
+    return false;
+  }
+  return g_estopRoutes[index].peerConfigured;
+#else
+  (void)index;
+  return false;
+#endif
+}
+
+String getEStopRouteTargetMac(size_t index) {
+#if APP_MODE == APP_MODE_ESTOP
+  return configuredOrRequestedMac(index);
+#else
+  (void)index;
+  return String();
+#endif
+}
+
+String getEStopRouteEffectiveTargetMac(size_t index) {
+#if APP_MODE == APP_MODE_ESTOP
+  return configuredPeerMac(index);
+#else
+  (void)index;
   return String();
 #endif
 }

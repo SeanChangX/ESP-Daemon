@@ -6,6 +6,13 @@
 #include <array>
 #include <vector>
 
+struct EStopRouteConfig {
+  String target_mac;
+  uint8_t switch_pin;
+  bool switch_active_high;
+  bool switch_logic_inverted;
+};
+
 struct AppSettings {
   String device_name;
 
@@ -57,6 +64,9 @@ struct AppSettings {
   bool estop_wled_enabled;
   String estop_wled_base_url;
   uint16_t estop_wled_preset;
+  bool estop_buzzer_enabled;
+  uint8_t estop_buzzer_pin;
+  std::vector<EStopRouteConfig> estop_routes;
 
   std::vector<std::array<uint8_t, 6>> emergency_switch_macs;
 

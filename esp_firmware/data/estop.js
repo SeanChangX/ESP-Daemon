@@ -1,6 +1,14 @@
 const ESP_DAEMON_PLACEHOLDER_MAC = '00-00-00-00-00-00';
 const ESP_DAEMON_PLACEHOLDER_VERSION = '0.0.0';
 const SAVE_STATUS_BASE_CLASS = 'actions__status';
+const ESTOP_ROUTE_MAX = 16;
+const ESTOP_SETTINGS_READ_ENDPOINT = '/estop/settings/read';
+const ESTOP_SETTINGS_WRITE_ENDPOINT = '/estop/settings';
+const STATUS_POLL_INTERVAL_VISIBLE_MS = 1000;
+const STATUS_POLL_INTERVAL_HIDDEN_MS = 3000;
+
+let estopStatusPollTimer = null;
+let estopStatusPollInFlight = false;
 
 function normalizeMacDisplay(mac) {
   return String(mac || '').replace(/:/g, '-').toUpperCase();
@@ -66,8 +74,9 @@ function initThemeToggle() {
   });
 }
 
-function initNumericStepperControls() {
-  document.querySelectorAll('.settings-card input[type="number"]:not([readonly])').forEach(function(input) {
+function initNumericStepperControls(root) {
+  const scope = root || document;
+  scope.querySelectorAll('.settings-card input[type="number"]:not([readonly])').forEach(function(input) {
     if (input.closest('.num-stepper')) {
       return;
     }
@@ -208,8 +217,258 @@ function loadDeviceInfo() {
     });
 }
 
+function getRouteListEl() {
+  return document.getElementById('estopRouteList');
+}
+
+function setRouteError(msg) {
+  const el = document.getElementById('estopRouteError');
+  if (!el) {
+    return;
+  }
+  el.textContent = msg || '';
+}
+
+function clearRouteError() {
+  setRouteError('');
+}
+
+function defaultRouteConfig() {
+  return {
+    targetMac: '',
+    switchPin: 4,
+    switchActiveHigh: false,
+    switchLogicInverted: false
+  };
+}
+
+function getRouteItems() {
+  const list = getRouteListEl();
+  if (!list) {
+    return [];
+  }
+  return Array.from(list.querySelectorAll('.estop-route-item'));
+}
+
+function updateRouteLabels() {
+  getRouteItems().forEach(function(item, idx) {
+    const title = item.querySelector('.estop-route-item__title');
+    if (title) {
+      title.textContent = 'Route ' + String(idx + 1);
+    }
+  });
+}
+
+function buildRouteItem(routeRaw) {
+  const route = Object.assign(defaultRouteConfig(), routeRaw || {});
+  const uid = 'route_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+
+  const li = document.createElement('li');
+  li.className = 'estop-route-item';
+  li.innerHTML = [
+    '<div class="estop-route-item__head">',
+    '  <div class="estop-route-item__meta">',
+    '    <span class="estop-route-item__title">Route</span>',
+    '    <span class="status-pill estop-route-live">pending</span>',
+    '  </div>',
+    '  <button type="button" class="btn estop-route-remove">Remove</button>',
+    '</div>',
+    '<div class="estop-route-item__fields">',
+    '  <div class="field">',
+    '    <label for="' + uid + '_target">ESP-Daemon MAC (target)</label>',
+    '    <input id="' + uid + '_target" class="estop-route-target" type="text" inputmode="text" autocomplete="off" placeholder="AA-BB-CC-DD-EE-FF" maxlength="17" spellcheck="false">',
+    '  </div>',
+    '  <div class="field">',
+    '    <label for="' + uid + '_pin">E-Stop GPIO</label>',
+    '    <input id="' + uid + '_pin" class="estop-route-pin" type="number" min="0" max="48">',
+    '  </div>',
+    '  <div class="settings-toggle-stack settings-toggle-stack--compact">',
+    '    <div class="settings-switch-row">',
+    '      <label class="settings-switch-label" for="' + uid + '_active">Switch active when HIGH</label>',
+    '      <label class="switch-control">',
+    '        <input id="' + uid + '_active" class="estop-route-active-high" type="checkbox">',
+    '        <span class="switch-slider"></span>',
+    '      </label>',
+    '    </div>',
+    '    <div class="settings-switch-row">',
+    '      <label class="settings-switch-label" for="' + uid + '_invert">Invert pressed/released logic</label>',
+    '      <label class="switch-control">',
+    '        <input id="' + uid + '_invert" class="estop-route-logic-inverted" type="checkbox">',
+    '        <span class="switch-slider"></span>',
+    '      </label>',
+    '    </div>',
+    '  </div>',
+    '</div>'
+  ].join('');
+
+  const normalizedMac = normalizeMacColonFromAny(route.targetMac || '');
+  const macInput = li.querySelector('.estop-route-target');
+  const pinInput = li.querySelector('.estop-route-pin');
+  const activeHighInput = li.querySelector('.estop-route-active-high');
+  const logicInvertedInput = li.querySelector('.estop-route-logic-inverted');
+
+  if (macInput) {
+    macInput.value = normalizedMac ? macColonToDisplayHyphen(normalizedMac) : String(route.targetMac || '').toUpperCase();
+  }
+  if (pinInput) {
+    pinInput.value = route.switchPin != null ? String(route.switchPin) : '4';
+  }
+  if (activeHighInput) {
+    activeHighInput.checked = !!route.switchActiveHigh;
+  }
+  if (logicInvertedInput) {
+    logicInvertedInput.checked = !!route.switchLogicInverted;
+  }
+
+  const removeBtn = li.querySelector('.estop-route-remove');
+  if (removeBtn) {
+    removeBtn.addEventListener('click', function() {
+      const items = getRouteItems();
+      if (items.length <= 1) {
+        setRouteError('At least 1 route is required.');
+        return;
+      }
+      li.remove();
+      updateRouteLabels();
+      clearRouteError();
+    });
+  }
+
+  return li;
+}
+
+function addRoute(routeRaw) {
+  const list = getRouteListEl();
+  if (!list) {
+    return;
+  }
+  const items = getRouteItems();
+  if (items.length >= ESTOP_ROUTE_MAX) {
+    setRouteError('Maximum ' + ESTOP_ROUTE_MAX + ' routes.');
+    return;
+  }
+
+  const item = buildRouteItem(routeRaw);
+  list.appendChild(item);
+  initNumericStepperControls(item);
+  updateRouteLabels();
+  clearRouteError();
+}
+
+function clearRouteList() {
+  const list = getRouteListEl();
+  if (!list) {
+    return;
+  }
+  list.innerHTML = '';
+}
+
+function applyRoutesFromSettings(data) {
+  const routes = Array.isArray(data.estopRoutes) && data.estopRoutes.length > 0
+    ? data.estopRoutes
+    : [{
+      targetMac: data.estopTargetMac || '',
+      switchPin: data.estopSwitchPin != null ? data.estopSwitchPin : 4,
+      switchActiveHigh: !!data.estopSwitchActiveHigh,
+      switchLogicInverted: !!data.estopSwitchLogicInverted
+    }];
+
+  clearRouteList();
+  routes.slice(0, ESTOP_ROUTE_MAX).forEach(function(route) {
+    addRoute(route);
+  });
+
+  if (getRouteItems().length === 0) {
+    addRoute(defaultRouteConfig());
+  }
+}
+
+function normalizeRouteFromDom(item, idx) {
+  const macInput = item.querySelector('.estop-route-target');
+  const pinInput = item.querySelector('.estop-route-pin');
+  const activeHighInput = item.querySelector('.estop-route-active-high');
+  const logicInvertedInput = item.querySelector('.estop-route-logic-inverted');
+
+  const routeId = 'Route ' + String(idx + 1);
+
+  const macRaw = macInput ? String(macInput.value || '').trim() : '';
+  const normalizedMac = macRaw.length > 0 ? normalizeMacColonFromAny(macRaw) : '';
+  if (macRaw.length > 0 && !normalizedMac) {
+    throw new Error(routeId + ': invalid MAC format. Use AA-BB-CC-DD-EE-FF.');
+  }
+
+  const pinValue = pinInput ? Number(pinInput.value) : NaN;
+  if (!Number.isFinite(pinValue) || pinValue < 0 || pinValue > 48) {
+    throw new Error(routeId + ': GPIO must be between 0 and 48.');
+  }
+
+  return {
+    targetMac: normalizedMac || '',
+    switchPin: Math.round(pinValue),
+    switchActiveHigh: !!(activeHighInput && activeHighInput.checked),
+    switchLogicInverted: !!(logicInvertedInput && logicInvertedInput.checked)
+  };
+}
+
+function collectRoutesPayload() {
+  const items = getRouteItems();
+  if (items.length === 0) {
+    throw new Error('At least 1 route is required.');
+  }
+  if (items.length > ESTOP_ROUTE_MAX) {
+    throw new Error('Maximum ' + ESTOP_ROUTE_MAX + ' routes.');
+  }
+
+  const routes = items.map(function(item, idx) {
+    return normalizeRouteFromDom(item, idx);
+  });
+
+  for (let i = 0; i < routes.length; i++) {
+    for (let j = i + 1; j < routes.length; j++) {
+      const a = routes[i];
+      const b = routes[j];
+      if (a.targetMac === b.targetMac &&
+          a.switchPin === b.switchPin &&
+          a.switchActiveHigh === b.switchActiveHigh &&
+          a.switchLogicInverted === b.switchLogicInverted) {
+        throw new Error('Route ' + String(i + 1) + ' and Route ' + String(j + 1) + ' are duplicated.');
+      }
+    }
+  }
+
+  return routes;
+}
+
+function applyRouteRuntimeStatus(statusRoutes) {
+  const rows = getRouteItems();
+  rows.forEach(function(item, idx) {
+    const pill = item.querySelector('.estop-route-live');
+    if (!pill) {
+      return;
+    }
+
+    const st = Array.isArray(statusRoutes) ? statusRoutes[idx] : null;
+    if (!st) {
+      setPillState(pill, 'pending', false);
+      return;
+    }
+
+    if (st.peerConfigured) {
+      setPillState(pill, 'online', true);
+      return;
+    }
+
+    const targetMac = normalizeMacColonFromAny(st.targetMac || '');
+    if (targetMac) {
+      setPillState(pill, 'waiting', false);
+    } else {
+      setPillState(pill, 'no target', false);
+    }
+  });
+}
+
 function loadSettings() {
-  return fetch('/settings/read', {
+  return fetch(ESTOP_SETTINGS_READ_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ authPin: '' })
@@ -224,26 +483,19 @@ function loadSettings() {
         throw new Error(result.data.message || 'Failed to load settings');
       }
 
-      const targetInput = document.getElementById('estopTargetMac');
-      const pinInput = document.getElementById('estopSwitchPin');
-      const activeHighInput = document.getElementById('estopSwitchActiveHigh');
-      const logicInvertedInput = document.getElementById('estopSwitchLogicInverted');
+      applyRoutesFromSettings(result.data);
+
+      const buzzerEnabledInput = document.getElementById('estopBuzzerEnabled');
+      const buzzerPinInput = document.getElementById('estopBuzzerPin');
       const wledEnabledInput = document.getElementById('estopWledEnabled');
       const wledBaseUrlInput = document.getElementById('estopWledBaseUrl');
       const wledPresetInput = document.getElementById('estopWledPreset');
 
-      if (targetInput) {
-        const normalized = normalizeMacColonFromAny(result.data.estopTargetMac || '');
-        targetInput.value = normalized ? macColonToDisplayHyphen(normalized) : '';
+      if (buzzerEnabledInput) {
+        buzzerEnabledInput.checked = !!result.data.estopBuzzerEnabled;
       }
-      if (pinInput) {
-        pinInput.value = result.data.estopSwitchPin != null ? String(result.data.estopSwitchPin) : '';
-      }
-      if (activeHighInput) {
-        activeHighInput.checked = !!result.data.estopSwitchActiveHigh;
-      }
-      if (logicInvertedInput) {
-        logicInvertedInput.checked = !!result.data.estopSwitchLogicInverted;
+      if (buzzerPinInput) {
+        buzzerPinInput.value = result.data.estopBuzzerPin != null ? String(result.data.estopBuzzerPin) : '5';
       }
       if (wledEnabledInput) {
         wledEnabledInput.checked = !!result.data.estopWledEnabled;
@@ -270,14 +522,23 @@ function refreshEStopStatus() {
       const rawEl = document.getElementById('switchRaw');
       const channelEl = document.getElementById('espNowChannelRuntime');
       const peerStatusEl = document.getElementById('peerStatus');
+      const routeStatusEl = document.getElementById('routeStatus');
       const packetEl = document.getElementById('packetCount');
       const wledEl = document.getElementById('wledStatus');
 
       const pressed = !!data.pressed;
+      const routeCount = Number(data.routeCount || 0);
+      const pressedRouteCount = Number(data.pressedRouteCount || 0);
+      const configuredPeerCount = Number(data.configuredPeerCount || 0);
+
       setPillState(switchState, pressed ? 'PRESSED (STOP)' : 'RELEASED', !pressed);
 
       if (rawEl) {
-        rawEl.textContent = data.rawLevel != null ? String(data.rawLevel) : '-';
+        if (routeCount > 1) {
+          rawEl.textContent = String(pressedRouteCount) + '/' + String(routeCount) + ' pressed';
+        } else {
+          rawEl.textContent = data.rawLevel != null ? String(data.rawLevel) : '-';
+        }
       }
       if (channelEl) {
         channelEl.textContent = data.espNowChannel != null ? String(data.espNowChannel) : '-';
@@ -286,50 +547,78 @@ function refreshEStopStatus() {
         packetEl.textContent = data.packetsSent != null ? String(data.packetsSent) : '0';
       }
 
-      const peerConfigured = !!data.targetPeerConfigured;
-      const effectiveMac = data.effectiveTargetMac ? macColonToDisplayHyphen(data.effectiveTargetMac) : '';
-      const configuredMac = normalizeMacColonFromAny(data.targetMac || '');
+      if (routeStatusEl) {
+        const routeOk = routeCount > 0 && pressedRouteCount === 0;
+        setPillState(routeStatusEl, String(pressedRouteCount) + '/' + String(routeCount) + ' active', routeOk);
+      }
 
-      if (peerConfigured) {
-        setPillState(peerStatusEl, effectiveMac || 'configured', true);
-      } else if (configuredMac) {
-        setPillState(peerStatusEl, 'waiting (' + macColonToDisplayHyphen(configuredMac) + ')', false);
-      } else {
+      if (routeCount === 0) {
         setPillState(peerStatusEl, 'not configured', false);
+      } else if (configuredPeerCount === routeCount) {
+        setPillState(peerStatusEl, String(configuredPeerCount) + '/' + String(routeCount) + ' online', true);
+      } else if (configuredPeerCount > 0) {
+        setPillState(peerStatusEl, String(configuredPeerCount) + '/' + String(routeCount) + ' online', false);
+      } else {
+        setPillState(peerStatusEl, 'waiting', false);
       }
 
       const snapshotReady = !!data.wledSnapshotReady;
       const wledText = mapWledStatusText(data.wledStatus, snapshotReady);
       const wledOk = wledText === 'ready' || wledText === 'ready (snapshot)' || wledText === 'restored';
       setPillState(wledEl, wledText, wledOk);
+
+      applyRouteRuntimeStatus(data.routes);
     })
     .catch(function() {
       setPillState(document.getElementById('switchState'), 'offline', false);
       setPillState(document.getElementById('peerStatus'), 'offline', false);
+      setPillState(document.getElementById('routeStatus'), 'offline', false);
       setPillState(document.getElementById('wledStatus'), 'offline', false);
     });
 }
 
+function getStatusPollIntervalMs() {
+  return document.hidden ? STATUS_POLL_INTERVAL_HIDDEN_MS : STATUS_POLL_INTERVAL_VISIBLE_MS;
+}
+
+function scheduleNextStatusPoll(delayMs) {
+  if (estopStatusPollTimer) {
+    clearTimeout(estopStatusPollTimer);
+  }
+  const delay = Number.isFinite(delayMs) ? Math.max(0, delayMs) : getStatusPollIntervalMs();
+  estopStatusPollTimer = setTimeout(runStatusPollTick, delay);
+}
+
+function runStatusPollTick() {
+  if (estopStatusPollInFlight) {
+    scheduleNextStatusPoll(getStatusPollIntervalMs());
+    return;
+  }
+
+  estopStatusPollInFlight = true;
+  refreshEStopStatus()
+    .then(function() {
+      estopStatusPollInFlight = false;
+      scheduleNextStatusPoll(getStatusPollIntervalMs());
+    })
+    .catch(function() {
+      estopStatusPollInFlight = false;
+      scheduleNextStatusPoll(getStatusPollIntervalMs());
+    });
+}
+
 function collectSavePayload() {
-  const macInput = document.getElementById('estopTargetMac');
-  const pinInput = document.getElementById('estopSwitchPin');
-  const activeHighInput = document.getElementById('estopSwitchActiveHigh');
-  const logicInvertedInput = document.getElementById('estopSwitchLogicInverted');
+  const routes = collectRoutesPayload();
+  const buzzerEnabledInput = document.getElementById('estopBuzzerEnabled');
+  const buzzerPinInput = document.getElementById('estopBuzzerPin');
   const wledEnabledInput = document.getElementById('estopWledEnabled');
   const wledBaseUrlInput = document.getElementById('estopWledBaseUrl');
   const wledPresetInput = document.getElementById('estopWledPreset');
 
-  const macRaw = macInput ? macInput.value : '';
-  const macTrimmed = String(macRaw || '').trim();
-  const normalizedMac = macTrimmed.length ? normalizeMacColonFromAny(macTrimmed) : '';
-
-  if (macTrimmed.length > 0 && !normalizedMac) {
-    throw new Error('Invalid MAC format. Use AA-BB-CC-DD-EE-FF.');
-  }
-
-  const pinValue = pinInput ? Number(pinInput.value) : NaN;
-  if (!Number.isFinite(pinValue) || pinValue < 0 || pinValue > 48) {
-    throw new Error('E-Stop GPIO must be between 0 and 48.');
+  const buzzerEnabled = !!(buzzerEnabledInput && buzzerEnabledInput.checked);
+  const buzzerPinValue = buzzerPinInput ? Number(buzzerPinInput.value) : NaN;
+  if (!Number.isFinite(buzzerPinValue) || buzzerPinValue < 0 || buzzerPinValue > 48) {
+    throw new Error('Buzzer GPIO must be between 0 and 48.');
   }
 
   const wledEnabled = !!(wledEnabledInput && wledEnabledInput.checked);
@@ -348,12 +637,17 @@ function collectSavePayload() {
     throw new Error('WLED preset must be between 1 and 250.');
   }
 
+  const firstRoute = routes[0] || defaultRouteConfig();
+
   return {
     authPin: '',
-    estopTargetMac: normalizedMac,
-    estopSwitchPin: Math.round(pinValue),
-    estopSwitchActiveHigh: !!(activeHighInput && activeHighInput.checked),
-    estopSwitchLogicInverted: !!(logicInvertedInput && logicInvertedInput.checked),
+    estopRoutes: routes,
+    estopTargetMac: firstRoute.targetMac,
+    estopSwitchPin: firstRoute.switchPin,
+    estopSwitchActiveHigh: firstRoute.switchActiveHigh,
+    estopSwitchLogicInverted: firstRoute.switchLogicInverted,
+    estopBuzzerEnabled: buzzerEnabled,
+    estopBuzzerPin: Math.round(buzzerPinValue),
     estopWledEnabled: wledEnabled,
     estopWledBaseUrl: wledBaseUrl,
     estopWledPreset: Math.round(wledPresetValue)
@@ -369,7 +663,7 @@ function saveSettings() {
     return;
   }
 
-  fetch('/settings', {
+  fetch(ESTOP_SETTINGS_WRITE_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -391,37 +685,69 @@ function saveSettings() {
     });
 }
 
+function rebootDevice() {
+  const confirmed = window.confirm('Reboot this device now?');
+  if (!confirmed) {
+    return;
+  }
+
+  fetch('/esp/reboot', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ authPin: '' })
+  })
+    .then(function(res) {
+      return parseJsonSafe(res).then(function(data) {
+        return { ok: res.ok, data: data };
+      });
+    })
+    .then(function(result) {
+      if (!result.ok || result.data.success !== true) {
+        throw new Error(result.data.message || 'Reboot failed');
+      }
+      setStatus(result.data.message || 'Rebooting...', true);
+    })
+    .catch(function(err) {
+      setStatus(err.message || 'Reboot failed', false);
+    });
+}
+
+function initRouteEditorUi() {
+  const addBtn = document.getElementById('estopRouteAddBtn');
+  if (addBtn) {
+    addBtn.addEventListener('click', function() {
+      addRoute(defaultRouteConfig());
+    });
+  }
+}
+
 document.addEventListener('DOMContentLoaded', function() {
-  initNumericStepperControls();
+  initNumericStepperControls(document);
   initThemeToggle();
+  initRouteEditorUi();
 
   const saveBtn = document.getElementById('saveBtn');
-  const reloadBtn = document.getElementById('reloadBtn');
+  const rebootBtn = document.getElementById('rebootBtn');
 
   if (saveBtn) {
     saveBtn.addEventListener('click', saveSettings);
   }
-  if (reloadBtn) {
-    reloadBtn.addEventListener('click', function() {
-      Promise.all([loadSettings(), refreshEStopStatus()])
-        .then(function() {
-          setStatus('Reloaded', true);
-        })
-        .catch(function(err) {
-          setStatus(err.message || 'Reload failed', false);
-        });
-    });
+  if (rebootBtn) {
+    rebootBtn.addEventListener('click', rebootDevice);
   }
+
   loadDeviceInfo();
   Promise.all([loadSettings(), refreshEStopStatus()])
     .then(function() {
       setStatus('Ready', true);
+      scheduleNextStatusPoll(getStatusPollIntervalMs());
     })
     .catch(function(err) {
       setStatus(err.message || 'Initial load failed', false);
+      scheduleNextStatusPoll(getStatusPollIntervalMs());
     });
 
-  setInterval(function() {
-    refreshEStopStatus();
-  }, 250);
+  document.addEventListener('visibilitychange', function() {
+    scheduleNextStatusPoll(document.hidden ? STATUS_POLL_INTERVAL_HIDDEN_MS : 100);
+  });
 });

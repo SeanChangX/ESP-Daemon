@@ -628,6 +628,11 @@ textarea:focus-visible {
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.status-items-container--estop {
+  max-height: none;
+  overflow: visible;
+}
+
 .light-mode .status-items-container {
   background: rgba(0, 0, 0, 0.03);
   border: 1px solid rgba(0, 0, 0, 0.06);

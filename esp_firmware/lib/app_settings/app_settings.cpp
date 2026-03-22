@@ -228,7 +228,7 @@ void applyDefaults() {
   g_settings.estop_wled_enabled = false;
   g_settings.estop_wled_base_url = "";
   g_settings.estop_wled_preset = 1;
-  g_settings.estop_buzzer_enabled = false;
+  g_settings.estop_buzzer_enabled = true;
   g_settings.estop_buzzer_pin = 5;
   syncRoutesFromLegacyEStopFields();
 

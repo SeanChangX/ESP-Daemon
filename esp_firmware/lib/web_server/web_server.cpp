@@ -529,6 +529,99 @@ static void buildEStopSettingsResponsePayload(JsonDocument& payload, bool includ
   }
 }
 
+static bool validateEStopStructuredSettingsPayload(const JsonObjectConst& src, String& error) {
+  if (!src["schema"].is<const char*>()) {
+    error = "Unsupported import format: missing schema";
+    return false;
+  }
+  const String schema = String(src["schema"].as<const char*>());
+  if (schema != "esp-estop.settings-export") {
+    error = "Unsupported import schema";
+    return false;
+  }
+
+  if (!src["schemaVersion"].is<int>()) {
+    error = "Unsupported import format: missing schemaVersion";
+    return false;
+  }
+  const int schemaVersion = src["schemaVersion"].as<int>();
+  if (schemaVersion != 1) {
+    error = "Unsupported schemaVersion (expected 1)";
+    return false;
+  }
+
+  if (!src["estop"].is<JsonObjectConst>()) {
+    error = "Unsupported import payload: missing estop section";
+    return false;
+  }
+
+  return true;
+}
+
+static void buildEStopStructuredSettingsExportPayload(JsonDocument& payload) {
+  const AppSettings& settings = getAppSettings();
+
+  payload["schema"] = "esp-estop.settings-export";
+  payload["schemaVersion"] = 1;
+  payload["generatedBy"] = "esp-estop";
+  payload["fwVersion"] = ESP_DAEMON_FW_VERSION;
+
+  JsonObject estop = payload["estop"].to<JsonObject>();
+  estop["targetMac"] = settings.estop_target_mac;
+  estop["switchPin"] = settings.estop_switch_pin;
+  estop["switchActiveHigh"] = settings.estop_switch_active_high;
+  estop["switchLogicInverted"] = settings.estop_switch_logic_inverted;
+
+  JsonArray routes = estop["routes"].to<JsonArray>();
+  for (const auto& route : settings.estop_routes) {
+    JsonObject routeObj = routes.add<JsonObject>();
+    routeObj["targetMac"] = route.target_mac;
+    routeObj["switchPin"] = route.switch_pin;
+    routeObj["switchActiveHigh"] = route.switch_active_high;
+    routeObj["switchLogicInverted"] = route.switch_logic_inverted;
+  }
+
+  JsonObject wled = estop["wled"].to<JsonObject>();
+  wled["enabled"] = settings.estop_wled_enabled;
+  wled["baseUrl"] = settings.estop_wled_base_url;
+  wled["preset"] = settings.estop_wled_preset;
+
+  JsonObject buzzer = estop["buzzer"].to<JsonObject>();
+  buzzer["enabled"] = settings.estop_buzzer_enabled;
+  buzzer["pin"] = settings.estop_buzzer_pin;
+}
+
+static void normalizeEStopStructuredSettingsForImport(const JsonObjectConst& src, JsonObject& dst) {
+  if (!src["estop"].is<JsonObjectConst>()) {
+    return;
+  }
+
+  const JsonObjectConst estop = src["estop"].as<JsonObjectConst>();
+  copyMappedKeyIfPresent(estop, dst, "targetMac", "estopTargetMac");
+  copyMappedKeyIfPresent(estop, dst, "switchPin", "estopSwitchPin");
+  copyMappedKeyIfPresent(estop, dst, "switchActiveHigh", "estopSwitchActiveHigh");
+  copyMappedKeyIfPresent(estop, dst, "switchLogicInverted", "estopSwitchLogicInverted");
+  copyMappedKeyIfPresent(estop, dst, "routes", "estopRoutes");
+
+  if (estop["wled"].is<JsonObjectConst>()) {
+    const JsonObjectConst wled = estop["wled"].as<JsonObjectConst>();
+    copyMappedKeyIfPresent(wled, dst, "enabled", "estopWledEnabled");
+    copyMappedKeyIfPresent(wled, dst, "baseUrl", "estopWledBaseUrl");
+    copyMappedKeyIfPresent(wled, dst, "preset", "estopWledPreset");
+  }
+
+  if (estop["buzzer"].is<JsonObjectConst>()) {
+    const JsonObjectConst buzzer = estop["buzzer"].as<JsonObjectConst>();
+    copyMappedKeyIfPresent(buzzer, dst, "enabled", "estopBuzzerEnabled");
+    copyMappedKeyIfPresent(buzzer, dst, "pin", "estopBuzzerPin");
+  }
+
+  dst.remove("pinProtectionEnabled");
+  dst.remove("pinCode");
+  dst.remove("pinRequired");
+  dst.remove("authPin");
+}
+
 static void handleEStopSettingsReadPost() {
   JsonDocument jsonObj;
   String parseError;
@@ -585,6 +678,121 @@ static void handleEStopSettingsPost() {
   }
 
   server.send(200, "application/json", buildSettingsResponse(true, "E-STOP settings updated"));
+}
+
+static void handleEStopSettingsExportPost() {
+  JsonDocument jsonObj;
+  String parseError;
+  if (!parseJsonBody(jsonObj, parseError)) {
+    server.send(400, "application/json", buildSettingsResponse(false, parseError));
+    return;
+  }
+
+  if (!authorizeSettingsRequest(jsonObj.as<JsonObjectConst>())) {
+    server.send(403, "application/json", buildSettingsResponse(false, "Invalid PIN"));
+    return;
+  }
+
+  JsonDocument payload;
+  buildEStopStructuredSettingsExportPayload(payload);
+
+  String output;
+  serializeJsonPretty(payload, output);
+  server.sendHeader("Content-Disposition", "attachment; filename=\"estop_settings_export.json\"");
+  server.send(200, "application/json", output);
+}
+
+static void handleEStopSettingsImportPost() {
+  JsonDocument jsonObj;
+  String parseError;
+  if (!parseJsonBody(jsonObj, parseError)) {
+    server.send(400, "application/json", buildSettingsResponse(false, parseError));
+    return;
+  }
+
+  const JsonObjectConst root = jsonObj.as<JsonObjectConst>();
+  if (!authorizeSettingsRequest(root)) {
+    server.send(403, "application/json", buildSettingsResponse(false, "Invalid PIN"));
+    return;
+  }
+
+  const JsonObjectConst updateObj = root["settings"].is<JsonObjectConst>()
+    ? root["settings"].as<JsonObjectConst>()
+    : root;
+
+  String formatError;
+  if (!validateEStopStructuredSettingsPayload(updateObj, formatError)) {
+    server.send(400, "application/json", buildSettingsResponse(false, formatError));
+    return;
+  }
+
+  JsonDocument normalizedDoc;
+  JsonObject normalizedUpdate = normalizedDoc.to<JsonObject>();
+  normalizeEStopStructuredSettingsForImport(updateObj, normalizedUpdate);
+
+  String updateError;
+  if (!applySettingsUpdate(normalizedUpdate, updateError)) {
+    server.send(400, "application/json", buildSettingsResponse(false, updateError));
+    return;
+  }
+
+  server.send(200, "application/json", buildSettingsResponse(true, "E-STOP settings imported"));
+}
+
+static void handleEStopSettingsRestoreDefaultsPost() {
+  JsonDocument jsonObj;
+  String parseError;
+  if (!parseJsonBody(jsonObj, parseError)) {
+    server.send(400, "application/json", buildSettingsResponse(false, parseError));
+    return;
+  }
+
+  if (!authorizeSettingsRequest(jsonObj.as<JsonObjectConst>())) {
+    server.send(403, "application/json", buildSettingsResponse(false, "Invalid PIN"));
+    return;
+  }
+
+  if (!resetAppSettingsToDefaults()) {
+    server.send(400, "application/json", buildSettingsResponse(false, "Failed to reset settings"));
+    return;
+  }
+
+  refreshNetworkIdentity();
+  refreshESPNowChannel();
+  if (getAppSettings().runtime_led_enabled) {
+    initLED();
+  }
+
+  server.send(200, "application/json", buildSettingsResponse(true, "E-STOP settings restored to defaults"));
+}
+
+static void handleEStopSettingsFactoryResetPost() {
+  JsonDocument jsonObj;
+  String parseError;
+  if (!parseJsonBody(jsonObj, parseError)) {
+    server.send(400, "application/json", buildSettingsResponse(false, parseError));
+    return;
+  }
+
+  if (!authorizeSettingsRequest(jsonObj.as<JsonObjectConst>())) {
+    server.send(403, "application/json", buildSettingsResponse(false, "Invalid PIN"));
+    return;
+  }
+
+  if (!eraseAppSettingsFromNvs()) {
+    server.send(400, "application/json", buildSettingsResponse(false, "Failed to erase NVS settings"));
+    return;
+  }
+
+  refreshNetworkIdentity();
+  refreshESPNowChannel();
+  if (getAppSettings().runtime_led_enabled) {
+    initLED();
+  }
+
+  server.send(200, "application/json", buildSettingsResponse(true, "Factory reset complete (full NVS erased), rebooting..."));
+  delay(50);
+  ESP.restart();
 }
 #endif
 
@@ -919,8 +1127,16 @@ void initWebServer() {
 #if APP_MODE == APP_MODE_ESTOP
   server.on("/estop/settings/read", HTTP_POST, handleEStopSettingsReadPost);
   server.on("/estop/settings", HTTP_POST, handleEStopSettingsPost);
+  server.on("/estop/settings/export", HTTP_POST, handleEStopSettingsExportPost);
+  server.on("/estop/settings/import", HTTP_POST, handleEStopSettingsImportPost);
+  server.on("/estop/settings/reset", HTTP_POST, handleEStopSettingsRestoreDefaultsPost);
+  server.on("/estop/settings/factory-reset", HTTP_POST, handleEStopSettingsFactoryResetPost);
   server.on("/estop/settings/read", HTTP_GET, redirectToRoot);
   server.on("/estop/settings", HTTP_GET, redirectToRoot);
+  server.on("/estop/settings/export", HTTP_GET, redirectToRoot);
+  server.on("/estop/settings/import", HTTP_GET, redirectToRoot);
+  server.on("/estop/settings/reset", HTTP_GET, redirectToRoot);
+  server.on("/estop/settings/factory-reset", HTTP_GET, redirectToRoot);
 #else
   server.on("/power", HTTP_GET, redirectToRoot);
   server.on("/emergency", HTTP_GET, redirectToRoot);

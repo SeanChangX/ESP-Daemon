@@ -185,7 +185,7 @@
 
 // Firmware version
 #ifndef ESP_DAEMON_FW_VERSION
-#define ESP_DAEMON_FW_VERSION "2.2.0"
+#define ESP_DAEMON_FW_VERSION "2.2.1"
 #endif
 
 #endif

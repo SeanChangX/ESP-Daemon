@@ -1622,6 +1622,16 @@ textarea:focus-visible {
   align-items: center;
 }
 
+.actions__buttons--compact {
+  gap: 0.42rem 0.46rem;
+}
+
+.actions__buttons--compact .actions__btn {
+  min-width: 5.3rem;
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+}
+
 .actions__btn {
   min-width: 9.5rem;
   padding-left: 1rem;
@@ -1634,6 +1644,14 @@ textarea:focus-visible {
 
 .actions__btn--narrow {
   min-width: 6.75rem;
+}
+
+@media (max-width: 560px) {
+  .actions__buttons--compact .actions__btn {
+    min-width: 4.7rem;
+    padding-left: 0.62rem;
+    padding-right: 0.62rem;
+  }
 }
 
 .btn-action-icon {

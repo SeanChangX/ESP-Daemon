@@ -7,6 +7,10 @@ const SAVE_STATUS_FADE_MS = 240;
 const ESTOP_ROUTE_MAX = 16;
 const ESTOP_SETTINGS_READ_ENDPOINT = '/estop/settings/read';
 const ESTOP_SETTINGS_WRITE_ENDPOINT = '/estop/settings';
+const ESTOP_SETTINGS_EXPORT_ENDPOINT = '/estop/settings/export';
+const ESTOP_SETTINGS_IMPORT_ENDPOINT = '/estop/settings/import';
+const ESTOP_SETTINGS_RESET_ENDPOINT = '/estop/settings/reset';
+const ESTOP_SETTINGS_FACTORY_RESET_ENDPOINT = '/estop/settings/factory-reset';
 const STATUS_POLL_INTERVAL_VISIBLE_MS = 1000;
 const STATUS_POLL_INTERVAL_HIDDEN_MS = 3000;
 
@@ -32,6 +36,35 @@ function normalizeMacColonFromAny(raw) {
 
 function macColonToDisplayHyphen(macColon) {
   return String(macColon || '').replace(/:/g, '-').toUpperCase();
+}
+
+function sanitizeFilenamePart(raw, fallback) {
+  const s = String(raw == null ? '' : raw).trim();
+  const cleaned = s
+    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^[_\.-]+|[_\.-]+$/g, '');
+  return cleaned || fallback;
+}
+
+function getDeviceNameForExportFilename() {
+  return sanitizeFilenamePart(window.location.hostname || '', 'device');
+}
+
+function getExportTimestampUtcCompact(dateValue) {
+  const d = dateValue || new Date();
+  const y = String(d.getUTCFullYear());
+  const mo = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const da = String(d.getUTCDate()).padStart(2, '0');
+  const h = String(d.getUTCHours()).padStart(2, '0');
+  const mi = String(d.getUTCMinutes()).padStart(2, '0');
+  const s = String(d.getUTCSeconds()).padStart(2, '0');
+  return y + mo + da + 'T' + h + mi + s + 'Z';
+}
+
+function getExportTimestampUtcIso(dateValue) {
+  const d = dateValue || new Date();
+  return d.toISOString();
 }
 
 function setStatus(msg, ok) {
@@ -717,6 +750,138 @@ function saveSettings() {
     });
 }
 
+function exportSettings() {
+  fetch(ESTOP_SETTINGS_EXPORT_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ authPin: '' })
+  })
+    .then(function(res) {
+      if (!res.ok) {
+        return parseJsonSafe(res).then(function(data) {
+          throw new Error(data.message || 'Backup failed');
+        });
+      }
+      return res.text();
+    })
+    .then(function(rawText) {
+      let exported = {};
+      try {
+        exported = JSON.parse(rawText || '{}');
+      } catch (err) {
+        throw new Error('Backup payload is not valid JSON');
+      }
+
+      const now = new Date();
+      exported.exportedAt = getExportTimestampUtcIso(now);
+
+      const blob = new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'esp-estop_settings_' + getDeviceNameForExportFilename() + '_' + getExportTimestampUtcCompact(now) + '.json';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(link.href);
+      setStatus('Backup exported', true);
+    })
+    .catch(function(err) {
+      setStatus(err.message || 'Backup failed', false);
+    });
+}
+
+function importSettingsFromText(rawText) {
+  let imported;
+  try {
+    imported = JSON.parse(rawText);
+  } catch (err) {
+    setStatus('Import JSON parse failed', false);
+    return;
+  }
+
+  fetch(ESTOP_SETTINGS_IMPORT_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      authPin: '',
+      settings: imported
+    })
+  })
+    .then(function(res) {
+      return parseJsonSafe(res).then(function(data) {
+        return { ok: res.ok, data: data };
+      });
+    })
+    .then(function(result) {
+      if (!result.ok || result.data.success !== true) {
+        throw new Error(result.data.message || 'Import failed');
+      }
+      setStatus(result.data.message || 'Backup restored', true);
+      return Promise.all([loadSettings(), refreshEStopStatus()]);
+    })
+    .catch(function(err) {
+      setStatus(err.message || 'Import failed', false);
+    });
+}
+
+function restoreDefaultsSettings() {
+  const confirmed = window.confirm('Restore E-STOP settings to defaults?');
+  if (!confirmed) {
+    return;
+  }
+
+  fetch(ESTOP_SETTINGS_RESET_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ authPin: '' })
+  })
+    .then(function(res) {
+      return parseJsonSafe(res).then(function(data) {
+        return { ok: res.ok, data: data };
+      });
+    })
+    .then(function(result) {
+      if (!result.ok || result.data.success !== true) {
+        throw new Error(result.data.message || 'Restore defaults failed');
+      }
+      setStatus(result.data.message || 'Defaults restored', true);
+      return Promise.all([loadSettings(), refreshEStopStatus()]);
+    })
+    .catch(function(err) {
+      setStatus(err.message || 'Restore defaults failed', false);
+    });
+}
+
+function factoryResetSettings() {
+  const confirmed = window.confirm('Factory reset will erase full NVS (including Wi-Fi credentials). Continue?');
+  if (!confirmed) {
+    return;
+  }
+
+  fetch(ESTOP_SETTINGS_FACTORY_RESET_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ authPin: '' })
+  })
+    .then(function(res) {
+      return parseJsonSafe(res).then(function(data) {
+        return { ok: res.ok, data: data };
+      });
+    })
+    .then(function(result) {
+      if (!result.ok || result.data.success !== true) {
+        throw new Error(result.data.message || 'Factory reset failed');
+      }
+      setStatus(result.data.message || 'Factory reset complete. Device rebooting...', true);
+      setTimeout(function() {
+        window.location.reload();
+      }, 1500);
+    })
+    .catch(function(err) {
+      setStatus(err.message || 'Factory reset failed', false);
+    });
+}
+
 function rebootDevice() {
   const confirmed = window.confirm('Reboot this device now?');
   if (!confirmed) {
@@ -759,10 +924,46 @@ document.addEventListener('DOMContentLoaded', function() {
   initRouteEditorUi();
 
   const saveBtn = document.getElementById('saveBtn');
+  const restoreDefaultsBtn = document.getElementById('restoreDefaultsBtn');
+  const factoryResetBtn = document.getElementById('factoryResetBtn');
+  const exportBtn = document.getElementById('exportBtn');
+  const importBtn = document.getElementById('importBtn');
+  const importFile = document.getElementById('importFile');
   const rebootBtn = document.getElementById('rebootBtn');
 
   if (saveBtn) {
     saveBtn.addEventListener('click', saveSettings);
+  }
+  if (restoreDefaultsBtn) {
+    restoreDefaultsBtn.addEventListener('click', restoreDefaultsSettings);
+  }
+  if (factoryResetBtn) {
+    factoryResetBtn.addEventListener('click', factoryResetSettings);
+  }
+  if (exportBtn) {
+    exportBtn.addEventListener('click', exportSettings);
+  }
+  if (importBtn && importFile) {
+    importBtn.addEventListener('click', function() {
+      importFile.click();
+    });
+  }
+  if (importFile) {
+    importFile.addEventListener('change', function(event) {
+      const file = event.target.files && event.target.files[0];
+      if (!file) {
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = function() {
+        importSettingsFromText(String(reader.result || ''));
+      };
+      reader.onerror = function() {
+        setStatus('Failed to read import file', false);
+      };
+      reader.readAsText(file);
+      event.target.value = '';
+    });
   }
   if (rebootBtn) {
     rebootBtn.addEventListener('click', rebootDevice);

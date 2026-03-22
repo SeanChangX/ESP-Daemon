@@ -545,8 +545,8 @@ static bool validateEStopStructuredSettingsPayload(const JsonObjectConst& src, S
     return false;
   }
   const int schemaVersion = src["schemaVersion"].as<int>();
-  if (schemaVersion != 1) {
-    error = "Unsupported schemaVersion (expected 1)";
+  if (schemaVersion != 3) {
+    error = "Unsupported schemaVersion (expected 3)";
     return false;
   }
 
@@ -562,7 +562,7 @@ static void buildEStopStructuredSettingsExportPayload(JsonDocument& payload) {
   const AppSettings& settings = getAppSettings();
 
   payload["schema"] = "esp-estop.settings-export";
-  payload["schemaVersion"] = 1;
+  payload["schemaVersion"] = 3;
   payload["generatedBy"] = "esp-estop";
   payload["fwVersion"] = ESP_DAEMON_FW_VERSION;
 

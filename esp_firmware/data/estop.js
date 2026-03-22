@@ -1,6 +1,9 @@
 const ESP_DAEMON_PLACEHOLDER_MAC = '00-00-00-00-00-00';
 const ESP_DAEMON_PLACEHOLDER_VERSION = '0.0.0';
 const SAVE_STATUS_BASE_CLASS = 'actions__status';
+const SAVE_STATUS_FADE_CLASS = 'actions__status--fade-out';
+const SAVE_STATUS_AUTO_HIDE_MS = 3000;
+const SAVE_STATUS_FADE_MS = 240;
 const ESTOP_ROUTE_MAX = 16;
 const ESTOP_SETTINGS_READ_ENDPOINT = '/estop/settings/read';
 const ESTOP_SETTINGS_WRITE_ENDPOINT = '/estop/settings';
@@ -9,6 +12,8 @@ const STATUS_POLL_INTERVAL_HIDDEN_MS = 3000;
 
 let estopStatusPollTimer = null;
 let estopStatusPollInFlight = false;
+let estopSaveStatusHideTimer = null;
+let estopSaveStatusClearTimer = null;
 
 function normalizeMacDisplay(mac) {
   return String(mac || '').replace(/:/g, '-').toUpperCase();
@@ -34,6 +39,15 @@ function setStatus(msg, ok) {
   if (!el) {
     return;
   }
+  if (estopSaveStatusHideTimer) {
+    clearTimeout(estopSaveStatusHideTimer);
+    estopSaveStatusHideTimer = null;
+  }
+  if (estopSaveStatusClearTimer) {
+    clearTimeout(estopSaveStatusClearTimer);
+    estopSaveStatusClearTimer = null;
+  }
+  el.classList.remove(SAVE_STATUS_FADE_CLASS);
   if (!msg) {
     el.textContent = '';
     el.className = SAVE_STATUS_BASE_CLASS;
@@ -41,6 +55,24 @@ function setStatus(msg, ok) {
   }
   el.textContent = msg;
   el.className = SAVE_STATUS_BASE_CLASS + ' ' + (ok ? 'ok' : 'err');
+  estopSaveStatusHideTimer = setTimeout(function() {
+    const statusEl = document.getElementById('saveStatus');
+    if (!statusEl) {
+      return;
+    }
+    statusEl.classList.add(SAVE_STATUS_FADE_CLASS);
+    estopSaveStatusClearTimer = setTimeout(function() {
+      const clearEl = document.getElementById('saveStatus');
+      if (!clearEl) {
+        return;
+      }
+      clearEl.textContent = '';
+      clearEl.className = SAVE_STATUS_BASE_CLASS;
+      clearEl.classList.remove(SAVE_STATUS_FADE_CLASS);
+      estopSaveStatusClearTimer = null;
+    }, SAVE_STATUS_FADE_MS);
+    estopSaveStatusHideTimer = null;
+  }, SAVE_STATUS_AUTO_HIDE_MS);
 }
 
 function updateThemeButtonMeta(isLightMode) {

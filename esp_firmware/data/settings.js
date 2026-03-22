@@ -35,6 +35,11 @@ function looksLikeEspDevicePayload(d) {
 }
 
 const SAVE_STATUS_BASE_CLASS = 'actions__status';
+const SAVE_STATUS_FADE_CLASS = 'actions__status--fade-out';
+const SAVE_STATUS_AUTO_HIDE_MS = 3000;
+const SAVE_STATUS_FADE_MS = 240;
+let saveStatusHideTimer = null;
+let saveStatusClearTimer = null;
 
 function setPreviewHint(msg) {
   const el = document.getElementById('saveStatus');
@@ -138,8 +143,40 @@ function setStatus(msg, ok) {
   if (!el) {
     return;
   }
+  if (saveStatusHideTimer) {
+    clearTimeout(saveStatusHideTimer);
+    saveStatusHideTimer = null;
+  }
+  if (saveStatusClearTimer) {
+    clearTimeout(saveStatusClearTimer);
+    saveStatusClearTimer = null;
+  }
+  el.classList.remove(SAVE_STATUS_FADE_CLASS);
+  if (!msg) {
+    el.textContent = '';
+    el.className = SAVE_STATUS_BASE_CLASS;
+    return;
+  }
   el.textContent = msg;
   el.className = SAVE_STATUS_BASE_CLASS + ' ' + (ok ? 'ok' : 'err');
+  saveStatusHideTimer = setTimeout(function() {
+    const statusEl = document.getElementById('saveStatus');
+    if (!statusEl) {
+      return;
+    }
+    statusEl.classList.add(SAVE_STATUS_FADE_CLASS);
+    saveStatusClearTimer = setTimeout(function() {
+      const clearEl = document.getElementById('saveStatus');
+      if (!clearEl) {
+        return;
+      }
+      clearEl.textContent = '';
+      clearEl.className = SAVE_STATUS_BASE_CLASS;
+      clearEl.classList.remove(SAVE_STATUS_FADE_CLASS);
+      saveStatusClearTimer = null;
+    }, SAVE_STATUS_FADE_MS);
+    saveStatusHideTimer = null;
+  }, SAVE_STATUS_AUTO_HIDE_MS);
 }
 
 function setFieldValue(id, value) {
@@ -150,6 +187,34 @@ function setFieldValue(id, value) {
   } else {
     el.value = value !== undefined && value !== null ? value : '';
   }
+}
+
+function sanitizeFilenamePart(raw, fallback) {
+  const s = String(raw == null ? '' : raw).trim();
+  const cleaned = s
+    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^[_\.-]+|[_\.-]+$/g, '');
+  return cleaned || fallback;
+}
+
+function getDeviceNameForExportFilename() {
+  const el = document.getElementById('deviceName');
+  if (el && String(el.value || '').trim()) {
+    return sanitizeFilenamePart(el.value, 'device');
+  }
+  return sanitizeFilenamePart(window.location.hostname || '', 'device');
+}
+
+function getExportTimestampUtcCompact() {
+  const d = new Date();
+  const y = String(d.getUTCFullYear());
+  const mo = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const da = String(d.getUTCDate()).padStart(2, '0');
+  const h = String(d.getUTCHours()).padStart(2, '0');
+  const mi = String(d.getUTCMinutes()).padStart(2, '0');
+  const s = String(d.getUTCSeconds()).padStart(2, '0');
+  return y + mo + da + 'T' + h + mi + s + 'Z';
 }
 
 /** Normalize to aa:bb:cc:dd:ee:ff; input may use : or - between pairs. */
@@ -561,6 +626,19 @@ function loadSettings() {
 }
 
 function saveSettings() {
+  const pinProt = document.getElementById('pinProtectionEnabled').checked;
+  const pc = String(document.getElementById('pinCode').value || '').trim();
+  if (pinProt && pc.length > 0) {
+    if (!/^\d+$/.test(pc)) {
+      setStatus('PIN code must contain only digits (0-9)', false);
+      return;
+    }
+    if (pc.length < 4 || pc.length > 32) {
+      setStatus('PIN code must be 4-32 digits', false);
+      return;
+    }
+  }
+
   const payload = collectPayload();
   fetch('/settings', {
     method: 'POST',
@@ -576,12 +654,14 @@ function saveSettings() {
     })
     .then((data) => {
       setStatus(data.message || 'Saved', true);
-      const pinProt = document.getElementById('pinProtectionEnabled').checked;
-      const pc = document.getElementById('pinCode').value;
-      if (pinProt && pc.length >= 4) {
+      if (!pinProt) {
+        setStoredAuthPin('');
+      } else if (pc.length >= 4) {
+        // PIN changed in this save, promote new PIN for follow-up requests.
         setStoredAuthPin(pc);
       } else {
-        setStoredAuthPin('');
+        // Keep current unlocked PIN when pinCode field is blank (masked/not edited).
+        setStoredAuthPin(getAuthPin());
       }
       loadSettings();
     })
@@ -605,14 +685,11 @@ function exportSettings() {
     })
     .then((blob) => {
       const url = URL.createObjectURL(blob);
-      const now = new Date();
-      const stamp =
-        String(now.getFullYear()) + '-' +
-        String(now.getMonth() + 1).padStart(2, '0') + '-' +
-        String(now.getDate()).padStart(2, '0');
+      const stamp = getExportTimestampUtcCompact();
+      const deviceName = getDeviceNameForExportFilename();
       const link = document.createElement('a');
       link.href = url;
-      link.download = 'settings_export_' + stamp + '.json';
+      link.download = 'esp-daemon_settings_' + deviceName + '_' + stamp + '.json';
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -633,12 +710,12 @@ function resetDefaultsSettings() {
     .then(async (res) => {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
-        throw new Error(data.message || 'Reset failed');
+        throw new Error(data.message || 'Factory reset failed');
       }
       return data;
     })
-    .then((data) => {
-      setStatus(data.message || 'Reset defaults', true);
+    .then(() => {
+      setStatus('Factory reset complete', true);
       // Re-bootstrap so PIN gate reflects new defaults.
       setTimeout(() => window.location.reload(), 300);
     })
@@ -723,7 +800,6 @@ document.addEventListener('DOMContentLoaded', () => {
     window.location.href = '/';
   });
 
-  document.getElementById('loadBtn').addEventListener('click', loadSettings);
   document.getElementById('saveBtn').addEventListener('click', saveSettings);
   const resetDefaultsBtn = document.getElementById('resetDefaultsBtn');
   if (resetDefaultsBtn) {

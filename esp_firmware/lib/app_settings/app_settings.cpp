@@ -118,6 +118,19 @@ String sanitizeDeviceName(String value) {
   return out;
 }
 
+bool isDigitsOnly(const String& value) {
+  if (value.length() == 0) {
+    return false;
+  }
+  for (size_t i = 0; i < value.length(); ++i) {
+    const char ch = value[i];
+    if (ch < '0' || ch > '9') {
+      return false;
+    }
+  }
+  return true;
+}
+
 String defaultDeviceNameFromMac() {
   const uint64_t efuse = ESP.getEfuseMac();
   const uint32_t macTail = static_cast<uint32_t>(efuse & 0xFFFFFFULL);
@@ -638,16 +651,26 @@ bool updateAppSettingsFromJson(const JsonObjectConst& json, String& error) {
     return false;
   }
 
-  if (g_settings.pin_protection_enabled && g_settings.pin_code.length() < 4) {
-    g_settings = backup;
-    error = "pinCode must be at least 4 digits when protection is enabled";
-    return false;
-  }
+  if (g_settings.pin_protection_enabled) {
+    g_settings.pin_code.trim();
 
-  if (g_settings.pin_protection_enabled && g_settings.pin_code.length() > 32) {
-    g_settings = backup;
-    error = "pinCode must be at most 32 characters";
-    return false;
+    if (g_settings.pin_code.length() < 4) {
+      g_settings = backup;
+      error = "pinCode must be at least 4 digits when protection is enabled";
+      return false;
+    }
+
+    if (g_settings.pin_code.length() > 32) {
+      g_settings = backup;
+      error = "pinCode must be at most 32 digits";
+      return false;
+    }
+
+    if (!isDigitsOnly(g_settings.pin_code)) {
+      g_settings = backup;
+      error = "pinCode must contain only digits (0-9)";
+      return false;
+    }
   }
 
   if (g_settings.ros_domain_id < 0 || g_settings.ros_domain_id > 232) {

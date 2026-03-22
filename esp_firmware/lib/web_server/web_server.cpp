@@ -14,6 +14,7 @@
 #include <ArduinoJson.h>
 #include <WebServer.h>
 #include <ElegantOTA.h>
+#include <cstring>
 
 WebServer server(80);
 
@@ -71,10 +72,19 @@ static String buildSettingsResponse(bool success, const String& message) {
   JsonDocument payload;
   payload["success"] = success;
   payload["message"] = message;
+#if APP_MODE == APP_MODE_ESTOP
+  payload["pinRequired"] = false;
+#else
   payload["pinRequired"] = getAppSettings().pin_protection_enabled;
+#endif
   String output;
   serializeJson(payload, output);
   return output;
+}
+
+static void redirectToRoot() {
+  server.sendHeader("Location", "/", true);
+  server.send(302, "text/plain", "");
 }
 
 static String getContentType(const String& path) {
@@ -116,7 +126,11 @@ static void handleDeviceInfoGet() {
            macBytes[0], macBytes[1], macBytes[2], macBytes[3], macBytes[4], macBytes[5]);
   doc["mac"] = macStr;
   doc["controlPanelUrl"] = getAppSettings().control_panel_url;
+#if APP_MODE == APP_MODE_ESTOP
+  doc["settingsPinRequired"] = false;
+#else
   doc["settingsPinRequired"] = getAppSettings().pin_protection_enabled;
+#endif
 
   String output;
   serializeJson(doc, output);
@@ -212,7 +226,12 @@ static String jsonTrimmedString(const JsonObjectConst& obj, const char* key) {
 }
 
 static bool authorizeSettingsRequest(const JsonObjectConst& jsonObj) {
+#if APP_MODE == APP_MODE_ESTOP
+  (void)jsonObj;
+  return true;
+#else
   return verifySettingsPin(jsonTrimmedString(jsonObj, "authPin"));
+#endif
 }
 
 static bool applySettingsUpdate(const JsonObjectConst& updateObj, String& updateError) {
@@ -226,6 +245,19 @@ static bool applySettingsUpdate(const JsonObjectConst& updateObj, String& update
     initLED();
   }
   return true;
+}
+
+static void copyImportSettingsWithoutPinFields(const JsonObjectConst& src, JsonObject& dst) {
+  for (JsonPairConst kv : src) {
+    const char* key = kv.key().c_str();
+    if (strcmp(key, "pinProtectionEnabled") == 0 ||
+        strcmp(key, "pinCode") == 0 ||
+        strcmp(key, "pinRequired") == 0 ||
+        strcmp(key, "authPin") == 0) {
+      continue;
+    }
+    dst[key] = kv.value();
+  }
 }
 
 #if APP_MODE == APP_MODE_ESTOP
@@ -275,7 +307,7 @@ static void handleEStopSettingsReadPost() {
 
   JsonDocument payload;
   buildEStopSettingsResponsePayload(payload, false);
-  payload["pinRequired"] = getAppSettings().pin_protection_enabled;
+  payload["pinRequired"] = false;
 
   String output;
   serializeJson(payload, output);
@@ -467,7 +499,10 @@ static void handleSettingsExportPost() {
 
   JsonDocument payload;
   appSettingsToJson(payload, false);
-  payload["pinRequired"] = getAppSettings().pin_protection_enabled;
+  // Backups must never contain PIN data or PIN state switches.
+  payload.remove("pinProtectionEnabled");
+  payload.remove("pinCode");
+  payload.remove("pinRequired");
 
   String output;
   serializeJsonPretty(payload, output);
@@ -493,8 +528,13 @@ static void handleSettingsImportPost() {
     ? root["settings"].as<JsonObjectConst>()
     : root;
 
+  JsonDocument sanitizedDoc;
+  JsonObject sanitizedUpdate = sanitizedDoc.to<JsonObject>();
+  copyImportSettingsWithoutPinFields(updateObj, sanitizedUpdate);
+  const JsonObjectConst sanitizedUpdateConst = sanitizedUpdate;
+
   String updateError;
-  if (!applySettingsUpdate(updateObj, updateError)) {
+  if (!applySettingsUpdate(sanitizedUpdateConst, updateError)) {
     server.send(400, "application/json", buildSettingsResponse(false, updateError));
     return;
   }
@@ -611,10 +651,17 @@ void initWebServer() {
 #if APP_MODE == APP_MODE_ESTOP
   server.on("/estop/settings/read", HTTP_POST, handleEStopSettingsReadPost);
   server.on("/estop/settings", HTTP_POST, handleEStopSettingsPost);
+  server.on("/estop/settings/read", HTTP_GET, redirectToRoot);
+  server.on("/estop/settings", HTTP_GET, redirectToRoot);
 #else
-  server.on("/settings", HTTP_GET, []() {
-    server.send(405, "application/json", buildSettingsResponse(false, "GET /settings is disabled"));
-  });
+  server.on("/power", HTTP_GET, redirectToRoot);
+  server.on("/emergency", HTTP_GET, redirectToRoot);
+  server.on("/settings/read", HTTP_GET, redirectToRoot);
+  server.on("/settings", HTTP_GET, redirectToRoot);
+  server.on("/settings/export", HTTP_GET, redirectToRoot);
+  server.on("/settings/import", HTTP_GET, redirectToRoot);
+  server.on("/settings/unlock", HTTP_GET, redirectToRoot);
+  server.on("/settings/reset", HTTP_GET, redirectToRoot);
   server.on("/settings/read", HTTP_POST, handleSettingsReadPost);
   server.on("/settings", HTTP_POST, handleSettingsPost);
   server.on("/settings/export", HTTP_POST, handleSettingsExportPost);
@@ -622,6 +669,7 @@ void initWebServer() {
   server.on("/settings/unlock", HTTP_POST, handleSettingsUnlockPost);
   server.on("/settings/reset", HTTP_POST, handleSettingsResetPost);
 #endif
+  server.on("/esp/reboot", HTTP_GET, redirectToRoot);
   server.on("/esp/reboot", HTTP_POST, handleEspRebootPost);
 
   server.onNotFound([]() {
@@ -635,8 +683,7 @@ void initWebServer() {
         path == "/connecttest.txt" ||
         path == "/success.txt" ||
         path == "/redirect") {
-      server.sendHeader("Location", "/", true);
-      server.send(302, "text/plain", "");
+      redirectToRoot();
       return;
     }
 
@@ -650,8 +697,7 @@ void initWebServer() {
 
     // Never expose the other app mode's UI pages even if assets exist in SPIFFS.
     if (isCrossModeUiAssetPath(path)) {
-      server.sendHeader("Location", "/", true);
-      server.send(302, "text/plain", "");
+      redirectToRoot();
       return;
     }
 
@@ -659,8 +705,7 @@ void initWebServer() {
       return;
     }
     DAEMON_LOGF("HTTP request not found, redirecting to /: %s\n", path.c_str());
-    server.sendHeader("Location", "/", true);
-    server.send(302, "text/plain", "");
+    redirectToRoot();
   });
 
   ElegantOTA.begin(&server);

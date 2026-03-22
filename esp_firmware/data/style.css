@@ -1467,6 +1467,9 @@ textarea:focus-visible {
   min-height: 1.2rem;
   max-width: 42rem;
   margin: 0;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.24s ease, transform 0.24s ease;
 }
 
 .actions__status:empty {
@@ -1499,6 +1502,11 @@ textarea:focus-visible {
   border-color: rgba(255, 69, 58, 0.45);
   background: rgba(255, 69, 58, 0.10);
   color: #ff453a;
+}
+
+.actions__status.actions__status--fade-out {
+  opacity: 0;
+  transform: translateY(4px);
 }
 
 .ok { color: #30d158; }

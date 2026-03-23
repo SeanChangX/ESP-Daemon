@@ -1,0 +1,208 @@
+name: Build and Release Firmware
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install platformio
+
+      - name: Set release version from tag
+        run: |
+          VERSION="${{ github.ref_name }}"
+          echo "ESP_DAEMON_FW_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Using version: $VERSION"
+
+      - name: Build firmware
+        run: |
+          cd esp_firmware
+          export PLATFORMIO_BUILD_FLAGS="-DESP_DAEMON_FW_VERSION=\\\"${ESP_DAEMON_FW_VERSION}\\\""
+          platformio run -e seeed_xiao_esp32c3_prod
+          platformio run -e seeed_xiao_esp32c3_prod -t buildfs
+          platformio run -e seeed_xiao_esp32c3_estop
+          platformio run -e seeed_xiao_esp32c3_estop -t buildfs
+
+      - name: Check build output
+        run: |
+          ls -lh esp_firmware/.pio/build/seeed_xiao_esp32c3_prod/
+          ls -lh esp_firmware/.pio/build/seeed_xiao_esp32c3_estop/
+
+      - name: Prepare artifacts
+        run: |
+          set -e
+          mkdir -p dist
+          PROD_DIR="esp_firmware/.pio/build/seeed_xiao_esp32c3_prod"
+          ESTOP_DIR="esp_firmware/.pio/build/seeed_xiao_esp32c3_estop"
+
+          pick_fs_image() {
+            local build_dir="$1"
+            if [ -f "$build_dir/littlefs.bin" ]; then
+              echo "$build_dir/littlefs.bin"
+              return 0
+            fi
+            if [ -f "$build_dir/spiffs.bin" ]; then
+              echo "$build_dir/spiffs.bin"
+              return 0
+            fi
+            return 1
+          }
+
+          if [ -f "$PROD_DIR/firmware.bin" ]; then
+            cp "$PROD_DIR/firmware.bin" dist/firmware-product.bin
+            echo "firmware-product.bin copied"
+          else
+            echo "Product firmware.bin not found"
+            exit 1
+          fi
+
+          if [ -f "$ESTOP_DIR/firmware.bin" ]; then
+            cp "$ESTOP_DIR/firmware.bin" dist/firmware-estop.bin
+            echo "firmware-estop.bin copied"
+          else
+            echo "E-STOP firmware.bin not found"
+            exit 1
+          fi
+
+          PROD_FS="$(pick_fs_image "$PROD_DIR")" || true
+          ESTOP_FS="$(pick_fs_image "$ESTOP_DIR")" || true
+
+          if [ -n "$PROD_FS" ]; then
+            cp "$PROD_FS" dist/filesystem-product.bin
+            echo "filesystem-product.bin copied from $(basename "$PROD_FS")"
+          else
+            echo "Product filesystem image not found"
+            exit 1
+          fi
+
+          if [ -n "$ESTOP_FS" ]; then
+            cp "$ESTOP_FS" dist/filesystem-estop.bin
+            echo "filesystem-estop.bin copied from $(basename "$ESTOP_FS")"
+          else
+            echo "E-STOP filesystem image not found"
+            exit 1
+          fi
+
+          for file in bootloader.bin partitions.bin; do
+            if [ -f "$PROD_DIR/$file" ]; then
+              cp "$PROD_DIR/$file" "dist/$file"
+              echo "$file copied"
+            else
+              echo "$file not found in product build output"
+              exit 1
+            fi
+          done
+
+          ls -lh dist/
+
+      - name: Generate latest.json
+        env:
+          VERSION: ${{ env.RELEASE_VERSION }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          export TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          python3 << 'PYEOF'
+          import hashlib
+          import json
+          import os
+
+          version = os.environ["VERSION"]
+          repo = os.environ["REPOSITORY"]
+          timestamp = os.environ["TIMESTAMP"]
+
+          files_to_publish = [
+              "firmware-product.bin",
+              "firmware-estop.bin",
+              "filesystem-product.bin",
+              "filesystem-estop.bin",
+              "bootloader.bin",
+              "partitions.bin",
+          ]
+
+          data = {
+              "version": version,
+              "timestamp": timestamp,
+              "default": "product",
+              "variants": {
+                  "product": {
+                      "label": "ESP-Daemon",
+                      "firmware": "firmware-product.bin",
+                      "filesystem": "filesystem-product.bin"
+                  },
+                  "estop": {
+                      "label": "ESP-Daemon E-STOP",
+                      "firmware": "firmware-estop.bin",
+                      "filesystem": "filesystem-estop.bin"
+                  }
+              },
+              "files": {}
+          }
+
+          for name in files_to_publish:
+              path = os.path.join("dist", name)
+              if not os.path.exists(path):
+                  continue
+              with open(path, "rb") as f:
+                  blob = f.read()
+              data["files"][name] = {
+                  "url": f"https://github.com/{repo}/releases/download/{version}/{name}",
+                  "size": os.path.getsize(path),
+                  "md5": hashlib.md5(blob).hexdigest(),
+              }
+
+          with open("dist/latest.json", "w", encoding="utf-8") as f:
+              json.dump(data, f, indent=2)
+          print(json.dumps(data, indent=2))
+          PYEOF
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: firmware-artifacts
+          path: dist/
+
+  create-release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Determine tag version
+        id: version
+        run: |
+          echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: firmware-artifacts
+          path: dist/
+
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
+          files: dist/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -47,8 +47,20 @@ function sanitizeFilenamePart(raw, fallback) {
   return cleaned || fallback;
 }
 
+function stripRedundantEstopPrefix(rawName) {
+  const s = String(rawName || '');
+  const stripped = s
+    .replace(/^(?:esp[-_]?estop|estop)[-_]*/i, '')
+    .replace(/^[_\.-]+|[_\.-]+$/g, '');
+  return stripped || 'device';
+}
+
 function getDeviceNameForExportFilename() {
-  return sanitizeFilenamePart(window.location.hostname || '', 'device');
+  const hostWithoutLocal = String(window.location.hostname || '')
+    .trim()
+    .replace(/\.local$/i, '');
+  const hostName = sanitizeFilenamePart(hostWithoutLocal, 'device');
+  return stripRedundantEstopPrefix(hostName);
 }
 
 function getExportTimestampUtcCompact(dateValue) {
@@ -778,7 +790,7 @@ function exportSettings() {
       const blob = new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
-      link.download = 'esp-estop_settings_' + getDeviceNameForExportFilename() + '_' + getExportTimestampUtcCompact(now) + '.json';
+      link.download = 'esp-estop_' + getDeviceNameForExportFilename() + '_settings_' + getExportTimestampUtcCompact(now) + '.json';
       document.body.appendChild(link);
       link.click();
       link.remove();

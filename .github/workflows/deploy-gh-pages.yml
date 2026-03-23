@@ -1,0 +1,176 @@
+name: Deploy Flasher to gh-pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/flasher/**"
+      - ".github/workflows/deploy-gh-pages.yml"
+  workflow_run:
+    workflows: ["Build and Release Firmware"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Fetch latest release and prepare flasher assets
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          set -e
+          API="https://api.github.com/repos/${REPO}/releases/latest"
+          RELEASE_JSON=$(curl -sL "$API")
+          TAG=$(echo "$RELEASE_JSON" | jq -r '.tag_name // empty')
+
+          if [ -z "$TAG" ]; then
+            echo "No release found. Skip deployment."
+            exit 1
+          fi
+
+          echo "Latest release: $TAG"
+          DIR="tools/flasher"
+          mkdir -p "$DIR"
+
+          LATEST_JSON_URL=$(echo "$RELEASE_JSON" | jq -r '.assets[] | select(.name == "latest.json") | .browser_download_url')
+          if [ -z "$LATEST_JSON_URL" ] || [ "$LATEST_JSON_URL" = "null" ]; then
+            echo "latest.json not found in release assets"
+            exit 1
+          fi
+
+          curl -sL -o "$DIR/latest.json" "$LATEST_JSON_URL"
+
+          for name in firmware-product.bin firmware-estop.bin filesystem-product.bin filesystem-estop.bin bootloader.bin partitions.bin; do
+            URL=$(echo "$RELEASE_JSON" | jq -r --arg n "$name" '.assets[] | select(.name == $n) | .browser_download_url')
+            if [ -n "$URL" ] && [ "$URL" != "null" ]; then
+              echo "Downloading $name"
+              curl -sL -o "$DIR/$name" "$URL"
+            fi
+          done
+
+          export PUBLISHED_AT=$(echo "$RELEASE_JSON" | jq -r '.published_at // empty')
+          python3 << 'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          flasher_dir = Path("tools/flasher")
+          latest_path = flasher_dir / "latest.json"
+          with latest_path.open(encoding="utf-8") as f:
+              data = json.load(f)
+
+          if not data.get("timestamp") and os.environ.get("PUBLISHED_AT"):
+              data["timestamp"] = os.environ["PUBLISHED_AT"]
+
+          files = data.get("files", {})
+          for name, meta in files.items():
+              meta["url"] = name
+
+          product_fw = None
+          estop_fw = None
+          product_fs = None
+          estop_fs = None
+          if "firmware-product.bin" in files:
+              product_fw = "firmware-product.bin"
+          if "firmware-estop.bin" in files:
+              estop_fw = "firmware-estop.bin"
+          if "filesystem-product.bin" in files:
+              product_fs = "filesystem-product.bin"
+          if "filesystem-estop.bin" in files:
+              estop_fs = "filesystem-estop.bin"
+
+          if not product_fw:
+              raise SystemExit("firmware-product.bin not found in release assets/latest.json")
+          if not estop_fw:
+              raise SystemExit("firmware-estop.bin not found in release assets/latest.json")
+          if not product_fs:
+              raise SystemExit("filesystem-product.bin not found in release assets/latest.json")
+          if not estop_fs:
+              raise SystemExit("filesystem-estop.bin not found in release assets/latest.json")
+          if "bootloader.bin" not in files:
+              raise SystemExit("bootloader.bin not found in release assets/latest.json")
+          if "partitions.bin" not in files:
+              raise SystemExit("partitions.bin not found in release assets/latest.json")
+
+          variants = data.setdefault("variants", {})
+          if product_fw:
+              product_variant = variants.setdefault("product", {})
+              product_variant.setdefault("label", "ESP-Daemon")
+              product_variant["firmware"] = product_fw
+              if product_fs:
+                  product_variant["filesystem"] = product_fs
+          if estop_fw:
+              estop_variant = variants.setdefault("estop", {})
+              estop_variant.setdefault("label", "ESP-Daemon E-STOP")
+              estop_variant["firmware"] = estop_fw
+              if estop_fs:
+                  estop_variant["filesystem"] = estop_fs
+          data.setdefault("default", "product")
+
+          with latest_path.open("w", encoding="utf-8") as f:
+              json.dump(data, f, indent=2)
+
+          # Partition offsets from esp_firmware/partitions/esp32c3_4mb_ota_spiffs.csv
+          def build_parts(firmware_name, filesystem_name):
+              parts = []
+              if "bootloader.bin" in files:
+                  parts.append({"path": "bootloader.bin", "offset": 0x0})
+              if "partitions.bin" in files:
+                  parts.append({"path": "partitions.bin", "offset": 0x8000})
+              if firmware_name and firmware_name in files:
+                  parts.append({"path": firmware_name, "offset": 0x10000})
+              if filesystem_name and filesystem_name in files:
+                  parts.append({"path": filesystem_name, "offset": 0x370000})
+              return parts
+
+          product_manifest = {
+              "name": "ESP-Daemon",
+              "version": data.get("version", "unknown"),
+              "new_install_prompt_erase": True,
+              "builds": [
+                  {
+                      "chipFamily": "ESP32-C3",
+                      "parts": build_parts(product_fw, product_fs),
+                  }
+              ],
+          }
+
+          estop_manifest = {
+              "name": "ESP-Daemon E-STOP",
+              "version": data.get("version", "unknown"),
+              "new_install_prompt_erase": True,
+              "builds": [
+                  {
+                      "chipFamily": "ESP32-C3",
+                      "parts": build_parts(estop_fw, estop_fs),
+                  }
+              ],
+          }
+
+          with (flasher_dir / "manifest-product.json").open("w", encoding="utf-8") as f:
+              json.dump(product_manifest, f, indent=2)
+          with (flasher_dir / "manifest-estop.json").open("w", encoding="utf-8") as f:
+              json.dump(estop_manifest, f, indent=2)
+          with (flasher_dir / "manifest.json").open("w", encoding="utf-8") as f:
+              json.dump(product_manifest, f, indent=2)
+
+          print("manifest-product.json and manifest-estop.json generated")
+          PY
+
+          ls -la "$DIR"
+
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./tools/flasher
+          publish_branch: gh-pages
+          force_orphan: true

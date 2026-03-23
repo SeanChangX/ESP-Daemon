@@ -25,6 +25,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install platformio
 
+      - name: Ensure PlatformIO penv activate shim
+        run: |
+          set -e
+          PENVDIR="$HOME/.platformio/penv/bin"
+          mkdir -p "$PENVDIR"
+          if [ ! -f "$PENVDIR/activate" ]; then
+            cat > "$PENVDIR/activate" << 'EOF'
+          #!/bin/sh
+          # CI shim for micro_ros_platformio: PlatformIO installed via pip may not
+          # provide ~/.platformio/penv/bin/activate. Keep this as a no-op.
+          true
+          EOF
+          fi
+
       - name: Set release version from tag
         run: |
           VERSION="${{ github.ref_name }}"

@@ -1,6 +1,7 @@
 #include "telemetry_log.h"
 
-#include <ArduinoJson.h>
+#include <math.h>
+#include <stdio.h>
 
 namespace {
 
@@ -33,6 +34,48 @@ void clearSessionUnlocked(uint32_t nowMs) {
   g_session_start_ms = nowMs;
   g_last_session_uptime_sec = 0;
   g_last_push_ms = 0; // allow immediate first push
+}
+
+size_t sanitizeMaxPoints(size_t max_points) {
+  if (max_points < 2u) {
+    return 2u;
+  }
+  return max_points;
+}
+
+size_t decimatedPointCount(size_t count, bool full, size_t max_points) {
+  if (full) {
+    return count;
+  }
+  const size_t maxPts = sanitizeMaxPoints(max_points);
+  return (count > maxPts) ? maxPts : count;
+}
+
+size_t decimatedIndex(size_t out_idx, size_t out_count, size_t src_count) {
+  if (src_count <= 1u || out_count <= 1u) {
+    return 0u;
+  }
+  const uint64_t num = static_cast<uint64_t>(out_idx) * static_cast<uint64_t>(src_count - 1u);
+  const uint64_t den = static_cast<uint64_t>(out_count - 1u);
+  return static_cast<size_t>((num + (den / 2u)) / den);
+}
+
+void appendBoolJson(String& out, bool value) {
+  out += (value ? "true" : "false");
+}
+
+void appendFloatJson(String& out, float value) {
+  if (!isfinite(value)) {
+    out += "null";
+    return;
+  }
+  char buf[24];
+  const int len = snprintf(buf, sizeof(buf), "%.3f", static_cast<double>(value));
+  if (len > 0) {
+    out += buf;
+  } else {
+    out += "0";
+  }
 }
 
 }  // namespace
@@ -93,7 +136,7 @@ void telemetryLogMaybePush(float voltage_v, bool pack_connected) {
   portEXIT_CRITICAL(&g_mux);
 }
 
-String telemetryLogGetJson() {
+String telemetryLogGetJson(bool full, size_t max_points) {
   size_t count = 0;
   uint32_t device_ms = 0;
   uint32_t uptime_sec = 0;
@@ -125,22 +168,49 @@ String telemetryLogGetJson() {
   }
   portEXIT_CRITICAL(&g_mux);
 
-  JsonDocument doc;
-  doc["periodMs"]         = kIntervalMs;
-  doc["capacity"]         = kCapacity;
-  doc["count"]            = count;
-  doc["deviceMs"]         = device_ms;
-  doc["uptimeSec"]        = uptime_sec;
-  doc["sessionStartMs"]   = session_start_ms;
-  doc["truncated"]        = truncated;
-  doc["connectedNow"]     = connected_now;
+  const size_t points = decimatedPointCount(count, full, max_points);
+  const bool downsampled = (points < count);
+  const size_t maxPointsUsed = sanitizeMaxPoints(max_points);
 
-  JsonArray arr = doc["v"].to<JsonArray>();
-  for (size_t i = 0; i < count; i++) {
-    arr.add(s_copy[i]);
-  }
-
+  // Reserve a practical lower bound to reduce heap churn on frequent HTTP polls.
+  const size_t approxCharsPerPoint = 8u;
   String out;
-  serializeJson(doc, out);
+  out.reserve(256u + (points * approxCharsPerPoint));
+
+  out += "{";
+  out += "\"periodMs\":";
+  out += String(kIntervalMs);
+  out += ",\"capacity\":";
+  out += String(kCapacity);
+  out += ",\"count\":";
+  out += String(count);
+  out += ",\"points\":";
+  out += String(points);
+  out += ",\"deviceMs\":";
+  out += String(device_ms);
+  out += ",\"uptimeSec\":";
+  out += String(uptime_sec);
+  out += ",\"sessionStartMs\":";
+  out += String(session_start_ms);
+  out += ",\"truncated\":";
+  appendBoolJson(out, truncated);
+  out += ",\"connectedNow\":";
+  appendBoolJson(out, connected_now);
+  out += ",\"downsampled\":";
+  appendBoolJson(out, downsampled);
+  if (!full) {
+    out += ",\"maxPoints\":";
+    out += String(maxPointsUsed);
+  }
+  out += ",\"v\":[";
+  for (size_t i = 0; i < points; i++) {
+    if (i > 0) {
+      out += ",";
+    }
+    const size_t srcIndex = downsampled ? decimatedIndex(i, points, count) : i;
+    appendFloatJson(out, s_copy[srcIndex]);
+  }
+  out += "]}";
+
   return out;
 }

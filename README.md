@@ -11,7 +11,7 @@
 <br>
 [![Docker](https://img.shields.io/badge/Docker-compose-2496ED.svg)](./docker-compose.yaml)
 [![ROS](https://img.shields.io/badge/ROS-Humble-22314E.svg)](https://docs.ros.org/en/humble/index.html)
-[![microROS](https://img.shields.io/badge/microROS-22314E.svg)](#micro-ros--docker)
+[![microROS](https://img.shields.io/badge/micro--ROS-22314E.svg)](#micro-ros--docker)
 [![ESP--NOW](https://img.shields.io/badge/ESP--NOW-wireless-00A8E8.svg)](#e-stop-over-esp-now)
 [![WLED](https://img.shields.io/badge/WLED-sync-ff9800.svg)](#led-and-wled)
 
@@ -275,7 +275,7 @@ On press/release edges, firmware calls `POST {baseUrl}/json/state` with `{"on": 
 | **Persistence** | Settings are stored in NVS (`Preferences`). Export/import uses structured JSON (`esp-daemon.settings-export` / `esp-estop.settings-export` schemas). |
 | **UI actions** | **EXPORT** / **IMPORT** — backup and restore. **RESTORE DEFAULTS** — firmware defaults, keeps NVS layout. **FACTORY RESET** — erases NVS including Wi-Fi credentials; device reboots. |
 | **PIN (Daemon only)** | When PIN protection is enabled, `POST /settings/*` bodies must include a valid `authPin`; use `POST /settings/unlock` from the UI flow. E-STOP settings endpoints do not use PIN. |
-| **Battery telemetry** | `GET /telemetry` returns a JSON discharge session: 1 Hz samples while the pack is connected, up to ~7200 points (~2 h), with connect/disconnect edges; see [HTTP API](#http-api). |
+| **Battery telemetry** | `GET /telemetry` returns a discharge session sampled at 1 Hz while connected (max ~7200 points, ~2 h). Default responses are downsampled for UI performance; use `?full=1` for full export, or `?maxPoints=<n>` to cap response points. |
 
 ---
 
@@ -303,7 +303,7 @@ JSON request bodies use `Content-Type: application/json` unless noted. Routes de
 | `GET` | `/health` | Liveness (`ok`) |
 | `GET` | `/device` | Version, MAC, `settingsPinRequired` |
 | `GET` | `/readings` | Sensors + `batteryStatus` |
-| `GET` | `/telemetry` | Battery discharge session JSON |
+| `GET` | `/telemetry` | Battery discharge session JSON (`?maxPoints=<n>`, `?full=1`) |
 | `POST` | `/power` | JSON: `controlGroup{1,2,3}Power` |
 | `POST` | `/emergency` | JSON: `emergency` (bool) — **control group 1 only** (legacy shortcut) |
 | `POST` | `/settings/unlock` | JSON: `pin` |
@@ -342,6 +342,8 @@ curl -fsS "$ESP/health"
 curl -fsS "$ESP/device"
 curl -fsS "$ESP/readings"
 curl -fsS "$ESP/telemetry"
+curl -fsS "$ESP/telemetry?maxPoints=120"   # UI-style downsampled response
+curl -fsS "$ESP/telemetry?full=1"          # full session (for export/download)
 
 curl -fsS -X POST "$ESP/power" -H "Content-Type: application/json" \
   -d '{"controlGroup1Power":true}'

@@ -1123,7 +1123,25 @@ void initWebServer() {
   });
 
   server.on("/telemetry", HTTP_GET, []() {
-    server.send(200, "application/json", telemetryLogGetJson());
+    bool full = false;
+    size_t max_points = 240u;
+    if (server.hasArg("full")) {
+      const String arg = server.arg("full");
+      full = (arg == "1" || arg == "true" || arg == "TRUE");
+    }
+    if (server.hasArg("maxPoints")) {
+      const long requested = server.arg("maxPoints").toInt();
+      if (requested > 0) {
+        long clamped = requested;
+        if (clamped < 64) {
+          clamped = 64;
+        } else if (clamped > 720) {
+          clamped = 720;
+        }
+        max_points = static_cast<size_t>(clamped);
+      }
+    }
+    server.send(200, "application/json", telemetryLogGetJson(full, max_points));
   });
 
   server.on("/power", HTTP_POST, handlePowerPost);

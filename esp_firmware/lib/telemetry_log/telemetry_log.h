@@ -9,6 +9,6 @@
 // - clears and starts a new session on the next battery connect edge
 void telemetryLogInit();
 void telemetryLogMaybePush(float voltage_v, bool pack_connected);
-String telemetryLogGetJson();
+String telemetryLogGetJson(bool full = false, size_t max_points = 240);
 
 #endif

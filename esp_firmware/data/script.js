@@ -150,6 +150,23 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // Battery discharge session voltage chart (canvas, SPIFFS). Data from GET /telemetry.
 var lastTelemetryPayload = null;
+var lastTelemetryFullPayload = null;
+
+function clampNumber(value, minValue, maxValue) {
+  return Math.max(minValue, Math.min(maxValue, value));
+}
+
+function computeTelemetryMaxPoints() {
+  var canvas = document.getElementById('techBatteryCanvas');
+  var parent = canvas && canvas.parentElement;
+  var width = parent ? Number(parent.clientWidth) : Number(window.innerWidth || 0);
+  if (!isFinite(width) || width <= 0) {
+    return 120;
+  }
+  // Keep roughly one point per 3.5px to avoid overdraw on small/mobile screens.
+  var points = Math.round(width / 3.5);
+  return clampNumber(points, 96, 220);
+}
 
 function isLightTheme() {
   return document.documentElement.classList.contains('light-mode');
@@ -427,11 +444,16 @@ function updateTelemetryMeta(telem) {
   }
   const uptimeSec = telem && telem.uptimeSec != null ? Number(telem.uptimeSec) : 0;
   const truncated = telem && telem.truncated === true;
-  el.textContent = 'Battery uptime ' + formatHMS(uptimeSec) + (truncated ? ' (truncated)' : '');
+  const total = telem && telem.count != null ? Number(telem.count) : 0;
+  const shown = telem && telem.points != null ? Number(telem.points) : total;
+  const sampled = telem && telem.downsampled === true;
+  const pointsText = sampled && total > 0 ? (' · ' + shown + '/' + total + ' pts') : '';
+  el.textContent = 'Battery uptime ' + formatHMS(uptimeSec) + pointsText + (truncated ? ' (truncated)' : '');
 }
 
 function fetchTelemetry() {
-  fetch('/telemetry')
+  var maxPoints = computeTelemetryMaxPoints();
+  fetch('/telemetry?maxPoints=' + encodeURIComponent(String(maxPoints)))
     .then(function(r) {
       return r.ok ? r.json() : null;
     })
@@ -444,6 +466,51 @@ function fetchTelemetry() {
       updateTelemetryMeta(data);
     })
     .catch(function() {});
+}
+
+function hasTelemetrySamples(payload) {
+  return !!(payload && payload.v && payload.v.length && Number(payload.count || payload.v.length) > 0);
+}
+
+function isSameTelemetrySession(a, b) {
+  if (!a || !b) {
+    return false;
+  }
+  var sa = Number(a.sessionStartMs);
+  var sb = Number(b.sessionStartMs);
+  if (isFinite(sa) && isFinite(sb) && sa > 0 && sb > 0) {
+    return sa === sb;
+  }
+  return false;
+}
+
+function fetchTelemetryForDownload() {
+  return fetch('/telemetry?full=1')
+    .then(function(r) {
+      return r.ok ? r.json() : null;
+    })
+    .then(function(data) {
+      if (hasTelemetrySamples(data)) {
+        lastTelemetryFullPayload = data;
+        return data;
+      }
+      if (hasTelemetrySamples(lastTelemetryFullPayload) && isSameTelemetrySession(lastTelemetryPayload, lastTelemetryFullPayload)) {
+        return lastTelemetryFullPayload;
+      }
+      if (hasTelemetrySamples(lastTelemetryPayload) && lastTelemetryPayload.downsampled !== true) {
+        return lastTelemetryPayload;
+      }
+      return null;
+    })
+    .catch(function() {
+      if (hasTelemetrySamples(lastTelemetryFullPayload) && isSameTelemetrySession(lastTelemetryPayload, lastTelemetryFullPayload)) {
+        return lastTelemetryFullPayload;
+      }
+      if (hasTelemetrySamples(lastTelemetryPayload) && lastTelemetryPayload.downsampled !== true) {
+        return lastTelemetryPayload;
+      }
+      return null;
+    });
 }
 
 function updateChartTheme() {
@@ -475,40 +542,44 @@ function getExportTimestampUtcIso(dateValue) {
 }
 
 function triggerTelemetryDownloadJson() {
-  if (!lastTelemetryPayload || !lastTelemetryPayload.count) {
-    return;
-  }
-  const now = new Date();
-  const exported = Object.assign({}, lastTelemetryPayload, {
-    exportedAt: getExportTimestampUtcIso(now)
+  fetchTelemetryForDownload().then(function(payload) {
+    if (!payload || !payload.count) {
+      return;
+    }
+    const now = new Date();
+    const exported = Object.assign({}, payload, {
+      exportedAt: getExportTimestampUtcIso(now)
+    });
+    const body = JSON.stringify(exported, null, 2);
+    const blob = new Blob([body], { type: 'application/json' });
+    const a = document.createElement('a');
+    const stamp = getExportTimestampUtcCompact(now);
+    a.href = URL.createObjectURL(blob);
+    a.download = 'battery_log_' + stamp + '.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
   });
-  const body = JSON.stringify(exported, null, 2);
-  const blob = new Blob([body], { type: 'application/json' });
-  const a = document.createElement('a');
-  const stamp = getExportTimestampUtcCompact(now);
-  a.href = URL.createObjectURL(blob);
-  a.download = 'battery_log_' + stamp + '.json';
-  a.click();
-  URL.revokeObjectURL(a.href);
 }
 
 function triggerTelemetryDownloadCsv() {
-  if (!lastTelemetryPayload || !lastTelemetryPayload.v || !lastTelemetryPayload.v.length) {
-    return;
-  }
-  const periodSec = (lastTelemetryPayload.periodMs != null ? Number(lastTelemetryPayload.periodMs) : 1000) / 1000;
-  const lines = ['uptime_s,voltage_V'];
-  const arr = lastTelemetryPayload.v;
-  for (var j = 0; j < arr.length; j++) {
-    lines.push(String(j * periodSec) + ',' + String(arr[j]));
-  }
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-  const a = document.createElement('a');
-  const stamp = getExportTimestampUtcCompact(new Date());
-  a.href = URL.createObjectURL(blob);
-  a.download = 'battery_log_' + stamp + '.csv';
-  a.click();
-  URL.revokeObjectURL(a.href);
+  fetchTelemetryForDownload().then(function(payload) {
+    if (!payload || !payload.v || !payload.v.length) {
+      return;
+    }
+    const periodSec = (payload.periodMs != null ? Number(payload.periodMs) : 1000) / 1000;
+    const lines = ['uptime_s,voltage_V'];
+    const arr = payload.v;
+    for (var j = 0; j < arr.length; j++) {
+      lines.push(String(j * periodSec) + ',' + String(arr[j]));
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    const stamp = getExportTimestampUtcCompact(new Date());
+    a.href = URL.createObjectURL(blob);
+    a.download = 'battery_log_' + stamp + '.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
 }
 
 // Add event listener for window resize with debouncing

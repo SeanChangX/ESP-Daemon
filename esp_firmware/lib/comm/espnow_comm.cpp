@@ -112,9 +112,7 @@ void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* incomingData, in
 constexpr uint32_t kEStopSendIntervalMs = 80;
 constexpr uint32_t kEStopDebounceMs = 35;
 constexpr uint32_t kEStopPeerEnsureIntervalMs = 1000;
-constexpr uint32_t kWledRestoreRetryIntervalMs = 1000;
 constexpr uint16_t kWledHttpTimeoutMs = 1500;
-constexpr size_t kWledSnapshotMaxBytes = 4096;
 constexpr char kEStopPayload[] = "STOP";
 // Cybertruck-style boot cue + standard factory E-STOP alarm (passive buzzer approximation).
 constexpr uint16_t kBuzzerAlarmOnMs = 300;
@@ -164,9 +162,6 @@ uint32_t g_estopPacketCount = 0;
 unsigned long g_lastEStopSendMs = 0;
 unsigned long g_lastPeerEnsureMs = 0;
 bool g_wledSnapshotValid = false;
-bool g_wledRestorePending = false;
-unsigned long g_wledLastRestoreAttemptMs = 0;
-String g_wledSnapshotJson;
 String g_wledStatus = "disabled";
 
 enum class BuzzerMode : uint8_t {
@@ -200,23 +195,6 @@ bool beginHttp(HTTPClient& http, const String& url) {
   return http.begin(url);
 }
 
-bool wledHttpGet(const String& url, String& responseBody) {
-  HTTPClient http;
-  if (!beginHttp(http, url)) {
-    return false;
-  }
-
-  const int httpCode = http.GET();
-  if (httpCode != HTTP_CODE_OK) {
-    http.end();
-    return false;
-  }
-
-  responseBody = http.getString();
-  http.end();
-  return true;
-}
-
 bool wledHttpPostJson(const String& url, const String& payload) {
   HTTPClient http;
   if (!beginHttp(http, url)) {
@@ -235,117 +213,51 @@ bool wledControlEnabled() {
   return settings.estop_wled_enabled && settings.estop_wled_base_url.length() > 0;
 }
 
-void handleWledPressedEdge() {
+bool applyWledPreset(uint16_t preset, const char* okStatus, const char* failStatus) {
+  g_wledSnapshotValid = false;
+
   if (!wledControlEnabled()) {
     g_wledStatus = "disabled";
-    g_wledSnapshotValid = false;
-    g_wledRestorePending = false;
-    g_wledSnapshotJson = "";
-    return;
+    return false;
   }
 
   if (WiFi.status() != WL_CONNECTED) {
     g_wledStatus = "wifi_disconnected";
-    return;
+    return false;
   }
 
   const String baseUrl = normalizeWledBaseUrl();
   if (baseUrl.length() == 0) {
     g_wledStatus = "url_empty";
-    return;
+    return false;
   }
   const String stateUrl = baseUrl + "/json/state";
 
-  String snapshot;
-  if (!wledHttpGet(stateUrl, snapshot)) {
-    g_wledStatus = "snapshot_get_failed";
-    g_wledSnapshotValid = false;
-    g_wledRestorePending = false;
-    g_wledSnapshotJson = "";
-    return;
-  }
-
-  if (snapshot.length() == 0 || snapshot.length() > kWledSnapshotMaxBytes) {
-    g_wledStatus = "snapshot_invalid";
-    g_wledSnapshotValid = false;
-    g_wledRestorePending = false;
-    g_wledSnapshotJson = "";
-    return;
-  }
-
-  g_wledSnapshotJson = snapshot;
-  g_wledSnapshotValid = true;
-  g_wledRestorePending = false;
-
   JsonDocument payload;
   payload["on"] = true;
-  payload["ps"] = getAppSettings().estop_wled_preset;
+  payload["ps"] = preset;
   String payloadText;
   serializeJson(payload, payloadText);
 
   if (wledHttpPostJson(stateUrl, payloadText)) {
-    g_wledStatus = "estop_preset_applied";
+    g_wledStatus = okStatus;
+    return true;
   } else {
-    g_wledStatus = "preset_apply_failed";
+    g_wledStatus = failStatus;
+    return false;
   }
 }
 
-void tryRestoreWledState() {
-  if (!g_wledRestorePending || !g_wledSnapshotValid) {
-    return;
-  }
-
-  if (g_estopSwitchPressed) {
-    return;
-  }
-
-  const unsigned long now = millis();
-  if ((now - g_wledLastRestoreAttemptMs) < kWledRestoreRetryIntervalMs) {
-    return;
-  }
-  g_wledLastRestoreAttemptMs = now;
-
-  if (WiFi.status() != WL_CONNECTED) {
-    g_wledStatus = "restore_wait_wifi";
-    return;
-  }
-
-  const String baseUrl = normalizeWledBaseUrl();
-  if (baseUrl.length() == 0) {
-    g_wledStatus = "restore_url_empty";
-    return;
-  }
-  const String stateUrl = baseUrl + "/json/state";
-
-  if (!wledHttpPostJson(stateUrl, g_wledSnapshotJson)) {
-    g_wledStatus = "restore_failed_retrying";
-    return;
-  }
-
-  g_wledStatus = "restored";
-  g_wledRestorePending = false;
-  g_wledSnapshotValid = false;
-  g_wledSnapshotJson = "";
+void handleWledPressedEdge() {
+  applyWledPreset(getAppSettings().estop_wled_pressed_preset,
+                  "estop_preset_applied",
+                  "preset_apply_failed");
 }
 
 void handleWledReleasedEdge() {
-  if (!wledControlEnabled()) {
-    g_wledStatus = "disabled";
-    g_wledSnapshotValid = false;
-    g_wledRestorePending = false;
-    g_wledSnapshotJson = "";
-    return;
-  }
-
-  if (!g_wledSnapshotValid) {
-    g_wledStatus = "no_snapshot";
-    g_wledRestorePending = false;
-    return;
-  }
-
-  g_wledRestorePending = true;
-  g_wledLastRestoreAttemptMs = 0;
-  tryRestoreWledState();
+  applyWledPreset(getAppSettings().estop_wled_released_preset,
+                  "release_preset_applied",
+                  "release_preset_apply_failed");
 }
 
 void stopBuzzerOutput() {
@@ -867,7 +779,6 @@ void handleESPNow() {
   sampleEStopSwitches();
   sendEStopIfPressed();
   updateBuzzer();
-  tryRestoreWledState();
 #endif
 }
 

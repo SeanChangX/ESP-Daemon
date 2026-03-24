@@ -227,7 +227,8 @@ void applyDefaults() {
   g_settings.estop_switch_logic_inverted = false;
   g_settings.estop_wled_enabled = false;
   g_settings.estop_wled_base_url = "";
-  g_settings.estop_wled_preset = 1;
+  g_settings.estop_wled_pressed_preset = 1;
+  g_settings.estop_wled_released_preset = 1;
   g_settings.estop_buzzer_enabled = true;
   g_settings.estop_buzzer_pin = 5;
   syncRoutesFromLegacyEStopFields();
@@ -426,7 +427,8 @@ void loadFromJson(const JsonObjectConst& json) {
   loadBool(json,   "estopSwitchLogicInverted",      g_settings.estop_switch_logic_inverted);
   loadBool(json,   "estopWledEnabled",              g_settings.estop_wled_enabled);
   loadString(json, "estopWledBaseUrl",              g_settings.estop_wled_base_url);
-  loadUInt16(json, "estopWledPreset",               g_settings.estop_wled_preset);
+  loadUInt16(json, "estopWledPressedPreset",        g_settings.estop_wled_pressed_preset);
+  loadUInt16(json, "estopWledReleasedPreset",       g_settings.estop_wled_released_preset);
   loadBool(json,   "estopBuzzerEnabled",            g_settings.estop_buzzer_enabled);
   loadUInt8(json,  "estopBuzzerPin",                g_settings.estop_buzzer_pin);
   syncRoutesFromLegacyEStopFields();
@@ -599,7 +601,8 @@ void appSettingsToJson(JsonDocument& doc, bool include_pin_code) {
   doc["estopSwitchLogicInverted"]   = g_settings.estop_switch_logic_inverted;
   doc["estopWledEnabled"]           = g_settings.estop_wled_enabled;
   doc["estopWledBaseUrl"]           = g_settings.estop_wled_base_url;
-  doc["estopWledPreset"]            = g_settings.estop_wled_preset;
+  doc["estopWledPressedPreset"]     = g_settings.estop_wled_pressed_preset;
+  doc["estopWledReleasedPreset"]    = g_settings.estop_wled_released_preset;
   doc["estopBuzzerEnabled"]         = g_settings.estop_buzzer_enabled;
   doc["estopBuzzerPin"]             = g_settings.estop_buzzer_pin;
   JsonArray estopRoutes = doc["estopRoutes"].to<JsonArray>();
@@ -869,9 +872,15 @@ bool updateAppSettingsFromJson(const JsonObjectConst& json, String& error) {
     }
   }
 
-  if (g_settings.estop_wled_preset < kWledPresetMin || g_settings.estop_wled_preset > kWledPresetMax) {
+  if (g_settings.estop_wled_pressed_preset < kWledPresetMin || g_settings.estop_wled_pressed_preset > kWledPresetMax) {
     g_settings = backup;
-    error = "estopWledPreset must be in range 1..250";
+    error = "estopWledPressedPreset must be in range 1..250";
+    return false;
+  }
+
+  if (g_settings.estop_wled_released_preset < kWledPresetMin || g_settings.estop_wled_released_preset > kWledPresetMax) {
+    g_settings = backup;
+    error = "estopWledReleasedPreset must be in range 1..250";
     return false;
   }
 

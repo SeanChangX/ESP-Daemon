@@ -382,7 +382,8 @@ static void buildStructuredSettingsExportPayload(JsonDocument& payload) {
   JsonObject estopWled = estop["wled"].to<JsonObject>();
   copyMappedKeyIfPresent(src, estopWled, "estopWledEnabled", "enabled");
   copyMappedKeyIfPresent(src, estopWled, "estopWledBaseUrl", "baseUrl");
-  copyMappedKeyIfPresent(src, estopWled, "estopWledPreset",  "preset");
+  copyMappedKeyIfPresent(src, estopWled, "estopWledPressedPreset",  "pressedPreset");
+  copyMappedKeyIfPresent(src, estopWled, "estopWledReleasedPreset", "releasedPreset");
 
   JsonObject estopBuzzer = estop["buzzer"].to<JsonObject>();
   copyMappedKeyIfPresent(src, estopBuzzer, "estopBuzzerEnabled", "enabled");
@@ -481,7 +482,8 @@ static void normalizeStructuredSettingsForImport(const JsonObjectConst& src, Jso
       const JsonObjectConst estopWled = estop["wled"].as<JsonObjectConst>();
       copyMappedKeyIfPresent(estopWled, dst, "enabled", "estopWledEnabled");
       copyMappedKeyIfPresent(estopWled, dst, "baseUrl", "estopWledBaseUrl");
-      copyMappedKeyIfPresent(estopWled, dst, "preset",  "estopWledPreset");
+      copyMappedKeyIfPresent(estopWled, dst, "pressedPreset",  "estopWledPressedPreset");
+      copyMappedKeyIfPresent(estopWled, dst, "releasedPreset", "estopWledReleasedPreset");
     }
     if (estop["buzzer"].is<JsonObjectConst>()) {
       const JsonObjectConst estopBuzzer = estop["buzzer"].as<JsonObjectConst>();
@@ -515,7 +517,8 @@ static void buildEStopSettingsResponsePayload(JsonDocument& payload, bool includ
   payload["estopSwitchLogicInverted"] = settings.estop_switch_logic_inverted;
   payload["estopWledEnabled"]         = settings.estop_wled_enabled;
   payload["estopWledBaseUrl"]         = settings.estop_wled_base_url;
-  payload["estopWledPreset"]          = settings.estop_wled_preset;
+  payload["estopWledPressedPreset"]   = settings.estop_wled_pressed_preset;
+  payload["estopWledReleasedPreset"]  = settings.estop_wled_released_preset;
   payload["estopBuzzerEnabled"]       = settings.estop_buzzer_enabled;
   payload["estopBuzzerPin"]           = settings.estop_buzzer_pin;
 
@@ -545,8 +548,8 @@ static bool validateEStopStructuredSettingsPayload(const JsonObjectConst& src, S
     return false;
   }
   const int schemaVersion = src["schemaVersion"].as<int>();
-  if (schemaVersion != 3) {
-    error = "Unsupported schemaVersion (expected 3)";
+  if (schemaVersion != 4) {
+    error = "Unsupported schemaVersion (expected 4)";
     return false;
   }
 
@@ -562,7 +565,7 @@ static void buildEStopStructuredSettingsExportPayload(JsonDocument& payload) {
   const AppSettings& settings = getAppSettings();
 
   payload["schema"] = "esp-estop.settings-export";
-  payload["schemaVersion"] = 3;
+  payload["schemaVersion"] = 4;
   payload["generatedBy"] = "esp-estop";
   payload["fwVersion"] = ESP_DAEMON_FW_VERSION;
 
@@ -584,7 +587,8 @@ static void buildEStopStructuredSettingsExportPayload(JsonDocument& payload) {
   JsonObject wled = estop["wled"].to<JsonObject>();
   wled["enabled"] = settings.estop_wled_enabled;
   wled["baseUrl"] = settings.estop_wled_base_url;
-  wled["preset"] = settings.estop_wled_preset;
+  wled["pressedPreset"] = settings.estop_wled_pressed_preset;
+  wled["releasedPreset"] = settings.estop_wled_released_preset;
 
   JsonObject buzzer = estop["buzzer"].to<JsonObject>();
   buzzer["enabled"] = settings.estop_buzzer_enabled;
@@ -607,7 +611,8 @@ static void normalizeEStopStructuredSettingsForImport(const JsonObjectConst& src
     const JsonObjectConst wled = estop["wled"].as<JsonObjectConst>();
     copyMappedKeyIfPresent(wled, dst, "enabled", "estopWledEnabled");
     copyMappedKeyIfPresent(wled, dst, "baseUrl", "estopWledBaseUrl");
-    copyMappedKeyIfPresent(wled, dst, "preset", "estopWledPreset");
+    copyMappedKeyIfPresent(wled, dst, "pressedPreset", "estopWledPressedPreset");
+    copyMappedKeyIfPresent(wled, dst, "releasedPreset", "estopWledReleasedPreset");
   }
 
   if (estop["buzzer"].is<JsonObjectConst>()) {
@@ -667,7 +672,8 @@ static void handleEStopSettingsPost() {
   copyJsonKeyIfPresent(root, updateObj, "estopRoutes");
   copyJsonKeyIfPresent(root, updateObj, "estopWledEnabled");
   copyJsonKeyIfPresent(root, updateObj, "estopWledBaseUrl");
-  copyJsonKeyIfPresent(root, updateObj, "estopWledPreset");
+  copyJsonKeyIfPresent(root, updateObj, "estopWledPressedPreset");
+  copyJsonKeyIfPresent(root, updateObj, "estopWledReleasedPreset");
   copyJsonKeyIfPresent(root, updateObj, "estopBuzzerEnabled");
   copyJsonKeyIfPresent(root, updateObj, "estopBuzzerPin");
 

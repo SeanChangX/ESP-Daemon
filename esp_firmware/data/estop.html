@@ -94,15 +94,19 @@
               <input id="estopWledBaseUrl" type="text" autocomplete="off" placeholder="http://wled.local" maxlength="192" spellcheck="false">
             </div>
             <div class="field">
-              <label for="estopWledPreset">WLED E-Stop Preset (1-250)</label>
-              <input id="estopWledPreset" type="number" min="1" max="250">
+              <label for="estopWledPressedPreset">WLED Pressed Preset (1-250)</label>
+              <input id="estopWledPressedPreset" type="number" min="1" max="250">
+            </div>
+            <div class="field">
+              <label for="estopWledReleasedPreset">WLED Released Preset (1-250)</label>
+              <input id="estopWledReleasedPreset" type="number" min="1" max="250">
             </div>
             <div class="estop-tips" role="note" aria-label="Usage tips">
               <div class="estop-tips__title">Quick Tips</div>
               <ul class="estop-tips__list">
                 <li>1 route = 1 GPIO + 1 target MAC. Reuse one GPIO across routes to fan out to multiple MACs.</li>
                 <li>With Buzzer enabled: E-STOP press triggers alarm beeps; first Wi-Fi connection after boot plays startup tone (passive buzzer uses PWM tone output).</li>
-                <li>WLED: apply preset on press, then auto-restore after all routes are released.</li>
+                <li>WLED: switch between configured pressed/released presets.</li>
               </ul>
             </div>
           </div>

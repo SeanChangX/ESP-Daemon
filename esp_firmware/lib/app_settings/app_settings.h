@@ -74,7 +74,8 @@ struct AppSettings {
   bool estop_switch_logic_inverted;
   bool estop_wled_enabled;
   String estop_wled_base_url;
-  uint16_t estop_wled_preset;
+  uint16_t estop_wled_pressed_preset;
+  uint16_t estop_wled_released_preset;
   bool estop_buzzer_enabled;
   uint8_t estop_buzzer_pin;
   std::vector<EStopRouteConfig> estop_routes;

@@ -97,7 +97,11 @@ void microROSTask(void* pvParameters) {
           }
         });
         if (state == AGENT_CONNECTED) {
-          rclc_executor_spin_some(&executor, RCL_MS_TO_NS(settings.ros_timer_ms));
+          const uint32_t spin_slice_ms =
+            (settings.ros_timer_ms < MROS_EXECUTOR_SPIN_SLICE_MS)
+              ? settings.ros_timer_ms
+              : static_cast<uint32_t>(MROS_EXECUTOR_SPIN_SLICE_MS);
+          rclc_executor_spin_some(&executor, RCL_MS_TO_NS(spin_slice_ms));
         }
         break;
       case AGENT_DISCONNECTED:

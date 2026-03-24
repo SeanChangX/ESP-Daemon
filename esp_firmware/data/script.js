@@ -194,6 +194,58 @@ function formatAxisUptimeShort(totalSec) {
   return pad2(mm) + ':' + pad2(ss);
 }
 
+function buildSmoothedVoltageSeries(rawValues) {
+  var out = new Array(rawValues.length);
+  var radius = rawValues.length > 300 ? 3 : 2;
+  var i;
+  for (i = 0; i < rawValues.length; i++) {
+    var num = 0;
+    var den = 0;
+    var j;
+    for (j = -radius; j <= radius; j++) {
+      var k = i + j;
+      if (k < 0 || k >= rawValues.length) {
+        continue;
+      }
+      var v = Number(rawValues[k]);
+      if (!isFinite(v)) {
+        continue;
+      }
+      var w = (radius + 1) - Math.abs(j);
+      num += v * w;
+      den += w;
+    }
+    out[i] = den > 0 ? (num / den) : Number(rawValues[i]);
+  }
+  return out;
+}
+
+function traceSmoothPath(ctx, points) {
+  if (!points || points.length === 0) {
+    return false;
+  }
+  ctx.moveTo(points[0].x, points[0].y);
+  if (points.length === 1) {
+    return true;
+  }
+  if (points.length === 2) {
+    ctx.lineTo(points[1].x, points[1].y);
+    return true;
+  }
+
+  var i;
+  for (i = 1; i < points.length - 1; i++) {
+    var xc = (points[i].x + points[i + 1].x) / 2;
+    var yc = (points[i].y + points[i + 1].y) / 2;
+    ctx.quadraticCurveTo(points[i].x, points[i].y, xc, yc);
+  }
+
+  var penultimate = points[points.length - 2];
+  var last = points[points.length - 1];
+  ctx.quadraticCurveTo(penultimate.x, penultimate.y, last.x, last.y);
+  return true;
+}
+
 function drawTechBatteryChart(telem) {
   const canvas = document.getElementById('techBatteryCanvas');
   if (!canvas) {
@@ -226,13 +278,14 @@ function drawTechBatteryChart(telem) {
     ctx.fillText('Collecting (1 Hz, waiting for full discharge session)', W / 2, H / 2);
     return;
   }
+  const plotArr = buildSmoothedVoltageSeries(vArr);
 
   var minV = Infinity;
   var maxV = -Infinity;
   var i;
   var val;
-  for (i = 0; i < vArr.length; i++) {
-    val = Number(vArr[i]);
+  for (i = 0; i < plotArr.length; i++) {
+    val = Number(plotArr[i]);
     if (!isFinite(val)) {
       continue;
     }
@@ -314,29 +367,25 @@ function drawTechBatteryChart(telem) {
 
   ctx.lineJoin = 'round';
   ctx.beginPath();
-  var started = false;
   var px;
   var py;
+  var points = [];
   for (i = 0; i < n; i++) {
-    val = Number(vArr[i]);
+    val = Number(plotArr[i]);
     if (!isFinite(val)) {
       continue;
     }
     px = xAt(i);
     py = yAt(val);
-    if (!started) {
-      ctx.moveTo(px, py);
-      started = true;
-    } else {
-      ctx.lineTo(px, py);
-    }
+    points.push({ x: px, y: py });
   }
-  if (!started) {
+  if (points.length === 0) {
     return;
   }
+  traceSmoothPath(ctx, points);
 
-  ctx.lineTo(xAt(n - 1), padT + plotH);
-  ctx.lineTo(xAt(0), padT + plotH);
+  ctx.lineTo(points[points.length - 1].x, padT + plotH);
+  ctx.lineTo(points[0].x, padT + plotH);
   ctx.closePath();
   var grad = ctx.createLinearGradient(0, padT, 0, padT + plotH);
   if (light) {
@@ -353,22 +402,9 @@ function drawTechBatteryChart(telem) {
     ctx.strokeStyle = 'rgba(255, 69, 58, 0.22)';
     ctx.lineWidth = 6;
     ctx.beginPath();
-    started = false;
-    for (i = 0; i < n; i++) {
-      val = Number(vArr[i]);
-      if (!isFinite(val)) {
-        continue;
-      }
-      px = xAt(i);
-      py = yAt(val);
-      if (!started) {
-        ctx.moveTo(px, py);
-        started = true;
-      } else {
-        ctx.lineTo(px, py);
-      }
+    if (traceSmoothPath(ctx, points)) {
+      ctx.stroke();
     }
-    ctx.stroke();
   }
 
   ctx.strokeStyle = light ? '#ff3b30' : '#ff453a';
@@ -376,22 +412,9 @@ function drawTechBatteryChart(telem) {
   ctx.shadowColor = light ? 'transparent' : 'rgba(255, 69, 58, 0.45)';
   ctx.shadowBlur = light ? 0 : 10;
   ctx.beginPath();
-  started = false;
-  for (i = 0; i < n; i++) {
-    val = Number(vArr[i]);
-    if (!isFinite(val)) {
-      continue;
-    }
-    px = xAt(i);
-    py = yAt(val);
-    if (!started) {
-      ctx.moveTo(px, py);
-      started = true;
-    } else {
-      ctx.lineTo(px, py);
-    }
+  if (traceSmoothPath(ctx, points)) {
+    ctx.stroke();
   }
-  ctx.stroke();
   ctx.shadowBlur = 0;
 
   // Chart title intentionally omitted (single discharge uptime session).
@@ -764,9 +787,9 @@ function plotData(jsonValue) {
     var remText = remOk ? formatHMS(Number(mins) * 60) : '--:--:--';
 
     if (!pctOk) {
-      estLine.textContent = '--% · -- left';
+      estLine.textContent = '--% · estimating...';
     } else {
-      estLine.textContent = pctRounded + '% · ' + (remOk ? (remText + ' left') : '-- left');
+      estLine.textContent = pctRounded + '% · ' + (remOk ? (remText + ' left') : 'estimating...');
     }
   }
 }

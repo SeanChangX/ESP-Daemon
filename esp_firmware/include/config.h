@@ -132,7 +132,7 @@
 #define TASK_PRIO_MICROROS 1
 #endif
 #ifndef TASK_PRIO_SERVICE
-#define TASK_PRIO_SERVICE 1
+#define TASK_PRIO_SERVICE 2
 #endif
 
 // Stack unit is bytes in ESP-IDF's xTaskCreatePinnedToCore() API.
@@ -160,6 +160,12 @@
 #define MROS_DISCONNECT_PING_FAILS 3
 #endif
 
+// Keep executor wait slices short so Web/Wi-Fi service loops stay responsive
+// even when ROS timer period is configured to a large value.
+#ifndef MROS_EXECUTOR_SPIN_SLICE_MS
+#define MROS_EXECUTOR_SPIN_SLICE_MS 5
+#endif
+
 // Basic compile-time safety guards to avoid unstable runtime settings.
 #if TASK_STACK_LED_BYTES < 1024
 #error "TASK_STACK_LED_BYTES too small (<1024)"
@@ -178,6 +184,9 @@
 #endif
 #if MROS_DISCONNECT_PING_FAILS < 1
 #error "MROS_DISCONNECT_PING_FAILS must be >= 1"
+#endif
+#if MROS_EXECUTOR_SPIN_SLICE_MS < 1
+#error "MROS_EXECUTOR_SPIN_SLICE_MS must be >= 1ms"
 #endif
 
 // Runtime settings (GPIO/LED/ROS/hostname/voltmeter/ESP-NOW whitelist/PIN, etc.)

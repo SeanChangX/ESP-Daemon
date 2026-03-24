@@ -39,6 +39,14 @@ void IRAM_ATTR onTimer() {
 }
 
 void voltmeter() {
+  // Debounce pack connection status so one noisy ADC sample does not
+  // instantly flip UI between valid estimate and "--".
+  static bool pack_connected_filtered = false;
+  static uint8_t connected_streak = 0;
+  static uint8_t disconnected_streak = 0;
+  constexpr uint8_t kConnectConfirmSamples = 2;
+  constexpr uint8_t kDisconnectConfirmSamples = 3;
+
   const AppSettings& settings = getAppSettings();
   const uint16_t sampleCount = settings.sliding_window_size > 0 ? settings.sliding_window_size : 1;
   const float dividerCalibration = (settings.voltage_divider_r2 > 0.0f)
@@ -50,9 +58,27 @@ void voltmeter() {
     Vbatt += analogReadMilliVolts(settings.voltmeter_pin);
   }
   const float raw_pack_v = dividerCalibration * Vbatt / sampleCount / 1000.0f + settings.voltmeter_offset;
-  const bool pack_connected = raw_pack_v >= settings.battery_disconnect_threshold;
+  const bool pack_connected_instant = raw_pack_v >= settings.battery_disconnect_threshold;
 
-  if (!pack_connected) {
+  if (pack_connected_instant) {
+    connected_streak = connected_streak < 255 ? static_cast<uint8_t>(connected_streak + 1) : connected_streak;
+    disconnected_streak = 0;
+  } else {
+    disconnected_streak = disconnected_streak < 255 ? static_cast<uint8_t>(disconnected_streak + 1) : disconnected_streak;
+    connected_streak = 0;
+  }
+
+  if (!pack_connected_filtered) {
+    if (connected_streak >= kConnectConfirmSamples) {
+      pack_connected_filtered = true;
+    }
+  } else {
+    if (disconnected_streak >= kDisconnectConfirmSamples) {
+      pack_connected_filtered = false;
+    }
+  }
+
+  if (!pack_connected_filtered) {
     Vbattf = 0.0f;
     batteryEstimateUpdate(0.0f, false);
     telemetryLogMaybePush(0.0f, false);

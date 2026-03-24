@@ -275,7 +275,7 @@ On press/release edges, firmware calls `POST {baseUrl}/json/state` with `{"on": 
 | **Persistence** | Settings are stored in NVS (`Preferences`). Export/import uses structured JSON (`esp-daemon.settings-export` / `esp-estop.settings-export` schemas). |
 | **UI actions** | **EXPORT** / **IMPORT** — backup and restore. **RESTORE DEFAULTS** — firmware defaults, keeps NVS layout. **FACTORY RESET** — erases NVS including Wi-Fi credentials; device reboots. |
 | **PIN (Daemon only)** | When PIN protection is enabled, `POST /settings/*` bodies must include a valid `authPin`; use `POST /settings/unlock` from the UI flow. E-STOP settings endpoints do not use PIN. |
-| **Battery telemetry** | `GET /telemetry` returns a discharge session sampled at 1 Hz while connected (max ~7200 points, ~2 h). Default responses are downsampled for UI performance; use `?full=1` for full export, or `?maxPoints=<n>` to cap response points. |
+| **Battery telemetry** | `GET /telemetry` returns a discharge session sampled at 1 Hz while connected (max ~7200 points, ~2 h). Default UI responses are downsampled with **LTTB**; use `?full=1` for full export, or `?maxPoints=<n>` to cap response points. |
 
 ---
 

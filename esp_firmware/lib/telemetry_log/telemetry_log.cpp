@@ -51,15 +51,6 @@ size_t decimatedPointCount(size_t count, bool full, size_t max_points) {
   return (count > maxPts) ? maxPts : count;
 }
 
-size_t decimatedIndex(size_t out_idx, size_t out_count, size_t src_count) {
-  if (src_count <= 1u || out_count <= 1u) {
-    return 0u;
-  }
-  const uint64_t num = static_cast<uint64_t>(out_idx) * static_cast<uint64_t>(src_count - 1u);
-  const uint64_t den = static_cast<uint64_t>(out_count - 1u);
-  return static_cast<size_t>((num + (den / 2u)) / den);
-}
-
 void appendBoolJson(String& out, bool value) {
   out += (value ? "true" : "false");
 }
@@ -76,6 +67,111 @@ void appendFloatJson(String& out, float value) {
   } else {
     out += "0";
   }
+}
+
+void appendSeriesJson(String& out, const float* series, size_t count, size_t points, bool downsampled) {
+  out += ",\"v\":[";
+  if (count == 0 || points == 0) {
+    out += "]";
+    return;
+  }
+
+  if (!downsampled || points >= count) {
+    for (size_t i = 0; i < count; i++) {
+      if (i > 0) {
+        out += ",";
+      }
+      appendFloatJson(out, series[i]);
+    }
+    out += "]";
+    return;
+  }
+
+  if (points == 1u) {
+    appendFloatJson(out, series[0]);
+    out += "]";
+    return;
+  }
+
+  if (points == 2u) {
+    appendFloatJson(out, series[0]);
+    out += ",";
+    appendFloatJson(out, series[count - 1u]);
+    out += "]";
+    return;
+  }
+
+  // Largest-Triangle-Three-Buckets (LTTB):
+  // preserve first/last, pick representative points that maximize local area.
+  appendFloatJson(out, series[0]);
+  const double every = static_cast<double>(count - 2u) / static_cast<double>(points - 2u);
+  size_t a = 0u;
+
+  for (size_t i = 0; i < points - 2u; i++) {
+    size_t avgRangeStart = static_cast<size_t>(floor((static_cast<double>(i) + 1.0) * every)) + 1u;
+    size_t avgRangeEnd = static_cast<size_t>(floor((static_cast<double>(i) + 2.0) * every)) + 1u;
+    if (avgRangeStart >= count) {
+      avgRangeStart = count - 1u;
+    }
+    if (avgRangeEnd > count) {
+      avgRangeEnd = count;
+    }
+    if (avgRangeEnd <= avgRangeStart) {
+      avgRangeEnd = (avgRangeStart + 1u <= count) ? (avgRangeStart + 1u) : count;
+    }
+
+    double avgX = 0.0;
+    double avgY = 0.0;
+    size_t avgRangeLen = 0u;
+    for (size_t j = avgRangeStart; j < avgRangeEnd; j++) {
+      avgX += static_cast<double>(j);
+      avgY += static_cast<double>(series[j]);
+      avgRangeLen++;
+    }
+    if (avgRangeLen > 0u) {
+      avgX /= static_cast<double>(avgRangeLen);
+      avgY /= static_cast<double>(avgRangeLen);
+    } else {
+      avgX = static_cast<double>(avgRangeStart);
+      avgY = static_cast<double>(series[avgRangeStart]);
+    }
+
+    size_t rangeOffs = static_cast<size_t>(floor(static_cast<double>(i) * every)) + 1u;
+    size_t rangeTo = static_cast<size_t>(floor((static_cast<double>(i) + 1.0) * every)) + 1u;
+
+    const size_t lastIndex = count - 1u;
+    if (rangeOffs >= lastIndex) {
+      rangeOffs = lastIndex - 1u;
+    }
+    if (rangeTo > lastIndex) {
+      rangeTo = lastIndex;
+    }
+    if (rangeTo <= rangeOffs) {
+      rangeTo = rangeOffs + 1u;
+    }
+
+    const double ax = static_cast<double>(a);
+    const double ay = static_cast<double>(series[a]);
+
+    size_t nextA = rangeOffs;
+    double maxArea = -1.0;
+    for (size_t j = rangeOffs; j < rangeTo; j++) {
+      const double area = fabs((ax - avgX) * (static_cast<double>(series[j]) - ay)
+                             - (ax - static_cast<double>(j)) * (avgY - ay));
+      if (area > maxArea) {
+        maxArea = area;
+        nextA = j;
+      }
+    }
+
+    out += ",";
+    appendFloatJson(out, series[nextA]);
+    a = nextA;
+  }
+
+  out += ",";
+  appendFloatJson(out, series[count - 1u]);
+  out += "]";
 }
 
 }  // namespace
@@ -198,19 +294,15 @@ String telemetryLogGetJson(bool full, size_t max_points) {
   appendBoolJson(out, connected_now);
   out += ",\"downsampled\":";
   appendBoolJson(out, downsampled);
+  if (downsampled) {
+    out += ",\"sampleMethod\":\"lttb\"";
+  }
   if (!full) {
     out += ",\"maxPoints\":";
     out += String(maxPointsUsed);
   }
-  out += ",\"v\":[";
-  for (size_t i = 0; i < points; i++) {
-    if (i > 0) {
-      out += ",";
-    }
-    const size_t srcIndex = downsampled ? decimatedIndex(i, points, count) : i;
-    appendFloatJson(out, s_copy[srcIndex]);
-  }
-  out += "]}";
+  appendSeriesJson(out, s_copy, count, points, downsampled);
+  out += "}";
 
   return out;
 }

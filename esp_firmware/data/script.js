@@ -151,6 +151,8 @@ document.addEventListener('DOMContentLoaded', function() {
 // Battery discharge session voltage chart (canvas, SPIFFS). Data from GET /telemetry.
 var lastTelemetryPayload = null;
 var lastTelemetryFullPayload = null;
+var telemetryRequestInFlight = false;
+var readingsRequestInFlight = false;
 
 function clampNumber(value, minValue, maxValue) {
   return Math.max(minValue, Math.min(maxValue, value));
@@ -166,6 +168,30 @@ function computeTelemetryMaxPoints() {
   // Keep roughly one point per 3.5px to avoid overdraw on small/mobile screens.
   var points = Math.round(width / 3.5);
   return clampNumber(points, 96, 220);
+}
+
+function fetchJsonWithTimeout(url, timeoutMs) {
+  if (typeof AbortController === 'undefined') {
+    return fetch(url, { cache: 'no-store' }).then(function(r) {
+      return r.ok ? r.json() : null;
+    });
+  }
+  var controller = new AbortController();
+  var timeoutId = setTimeout(function() {
+    controller.abort();
+  }, timeoutMs);
+  return fetch(url, { signal: controller.signal, cache: 'no-store' })
+    .then(function(r) {
+      clearTimeout(timeoutId);
+      return r.ok ? r.json() : null;
+    })
+    .catch(function(err) {
+      clearTimeout(timeoutId);
+      if (err && err.name === 'AbortError') {
+        return null;
+      }
+      throw err;
+    });
 }
 
 function isLightTheme() {
@@ -452,20 +478,23 @@ function updateTelemetryMeta(telem) {
 }
 
 function fetchTelemetry() {
+  if (telemetryRequestInFlight) {
+    return;
+  }
+  telemetryRequestInFlight = true;
   var maxPoints = computeTelemetryMaxPoints();
-  fetch('/telemetry?maxPoints=' + encodeURIComponent(String(maxPoints)))
+  fetchJsonWithTimeout('/telemetry?maxPoints=' + encodeURIComponent(String(maxPoints)), 3500)
     .then(function(r) {
-      return r.ok ? r.json() : null;
-    })
-    .then(function(data) {
-      if (!data) {
-        return;
+      if (r) {
+        lastTelemetryPayload = r;
+        drawTechBatteryChart(r);
+        updateTelemetryMeta(r);
       }
-      lastTelemetryPayload = data;
-      drawTechBatteryChart(data);
-      updateTelemetryMeta(data);
     })
-    .catch(function() {});
+    .catch(function() {})
+    .then(function() {
+      telemetryRequestInFlight = false;
+    });
 }
 
 function hasTelemetrySamples(payload) {
@@ -867,15 +896,21 @@ function plotData(jsonValue) {
 
 // Function to get current readings when the page loads
 function getReadings() {
-  var xhr = new XMLHttpRequest();
-  xhr.onreadystatechange = function() {
-    if (this.readyState == 4 && this.status == 200) {
-      var myObj = JSON.parse(this.responseText);
-      plotData(myObj);
-    }
-  };
-  xhr.open("GET", "/readings", true);
-  xhr.send();
+  if (readingsRequestInFlight) {
+    return;
+  }
+  readingsRequestInFlight = true;
+  fetchJsonWithTimeout('/readings', 2500)
+    .then(function(data) {
+      if (!data) {
+        return;
+      }
+      plotData(data);
+    })
+    .catch(function() {})
+    .then(function() {
+      readingsRequestInFlight = false;
+    });
 }
 
 // Poll sensor and power data periodically (sync WebServer mode)

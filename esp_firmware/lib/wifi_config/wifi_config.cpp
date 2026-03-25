@@ -6,10 +6,12 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <cstring>
+#include <WiFi.h>
 #include <ESPmDNS.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <NetWizard.h>
+#include <esp_wifi.h>
 
 int wifi_channel = 0;
 
@@ -167,6 +169,43 @@ void reconnectSavedWifiIfDisconnected() {
   }
 }
 
+void applyWifiStaLinkProfile(bool force = false) {
+  static unsigned long lastAttemptMs = 0;
+  static bool lastAppliedOk = false;
+  constexpr unsigned long kRetryMs = 5000;
+
+  const unsigned long now = millis();
+  if (!force && (now - lastAttemptMs) < kRetryMs) {
+    return;
+  }
+  lastAttemptMs = now;
+
+  if ((WiFi.getMode() & WIFI_STA) == 0) {
+    return;
+  }
+
+  // Keep latency predictable under weak links.
+  WiFi.setSleep(false);
+
+  const esp_err_t psErr = esp_wifi_set_ps(WIFI_PS_NONE);
+  const esp_err_t bwErr = esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
+
+  wifi_bandwidth_t currentBw = WIFI_BW_HT20;
+  const esp_err_t readBwErr = esp_wifi_get_bandwidth(WIFI_IF_STA, &currentBw);
+  const bool ok = (psErr == ESP_OK) && (bwErr == ESP_OK) && (readBwErr == ESP_OK) && (currentBw == WIFI_BW_HT20);
+
+  if (ok && !lastAppliedOk) {
+    DAEMON_LOGLN("WiFi STA profile applied: PS=NONE, BW=HT20");
+  } else if (!ok) {
+    DAEMON_LOGF("WiFi STA profile pending (ps=%d bw=%d getbw=%d curbw=%d)\n",
+                static_cast<int>(psErr),
+                static_cast<int>(bwErr),
+                static_cast<int>(readBwErr),
+                static_cast<int>(currentBw));
+  }
+  lastAppliedOk = ok;
+}
+
 void configureNetWizard() {
   if (netWizardConfigured) {
     return;
@@ -301,12 +340,14 @@ void initWiFi() {
   netWizard.setHostname(deviceName.c_str());
 
   WiFi.setSleep(false);
+  applyWifiStaLinkProfile(true);
 
   DAEMON_LOGF("Starting NetWizard auto-connect (AP SSID: %s, open AP)\n", provisioningSsid.c_str());
   netWizard.autoConnect(provisioningSsid.c_str(), "");
 
   if (WiFi.status() == WL_CONNECTED) {
     DAEMON_LOGF("WiFi connected: %s\n", WiFi.localIP().toString().c_str());
+    applyWifiStaLinkProfile(true);
     releaseNetWizardHttpIfConnected();
     persistEspNowChannelFromConnectedWifi();
   } else {
@@ -320,6 +361,7 @@ void initWiFi() {
 
 void handleWiFi() {
   netWizard.loop();
+  applyWifiStaLinkProfile(false);
   handleProvisioningRestart();
   reconnectSavedWifiIfDisconnected();
   ensurePortalIfDisconnected();

@@ -48,7 +48,7 @@ jobs:
 
           curl -sL -o "$DIR/latest.json" "$LATEST_JSON_URL"
 
-          for name in firmware-product.bin firmware-estop.bin filesystem-product.bin filesystem-estop.bin bootloader.bin partitions.bin; do
+          for name in firmware-esp-daemon.bin firmware-e-stop.bin filesystem-esp-daemon.bin filesystem-e-stop.bin bootloader.bin partitions.bin; do
             URL=$(echo "$RELEASE_JSON" | jq -r --arg n "$name" '.assets[] | select(.name == $n) | .browser_download_url')
             if [ -n "$URL" ] && [ "$URL" != "null" ]; then
               echo "Downloading $name"
@@ -78,23 +78,23 @@ jobs:
           estop_fw = None
           product_fs = None
           estop_fs = None
-          if "firmware-product.bin" in files:
-              product_fw = "firmware-product.bin"
-          if "firmware-estop.bin" in files:
-              estop_fw = "firmware-estop.bin"
-          if "filesystem-product.bin" in files:
-              product_fs = "filesystem-product.bin"
-          if "filesystem-estop.bin" in files:
-              estop_fs = "filesystem-estop.bin"
+          if "firmware-esp-daemon.bin" in files:
+              product_fw = "firmware-esp-daemon.bin"
+          if "firmware-e-stop.bin" in files:
+              estop_fw = "firmware-e-stop.bin"
+          if "filesystem-esp-daemon.bin" in files:
+              product_fs = "filesystem-esp-daemon.bin"
+          if "filesystem-e-stop.bin" in files:
+              estop_fs = "filesystem-e-stop.bin"
 
           if not product_fw:
-              raise SystemExit("firmware-product.bin not found in release assets/latest.json")
+              raise SystemExit("firmware-esp-daemon.bin not found in release assets/latest.json")
           if not estop_fw:
-              raise SystemExit("firmware-estop.bin not found in release assets/latest.json")
+              raise SystemExit("firmware-e-stop.bin not found in release assets/latest.json")
           if not product_fs:
-              raise SystemExit("filesystem-product.bin not found in release assets/latest.json")
+              raise SystemExit("filesystem-esp-daemon.bin not found in release assets/latest.json")
           if not estop_fs:
-              raise SystemExit("filesystem-estop.bin not found in release assets/latest.json")
+              raise SystemExit("filesystem-e-stop.bin not found in release assets/latest.json")
           if "bootloader.bin" not in files:
               raise SystemExit("bootloader.bin not found in release assets/latest.json")
           if "partitions.bin" not in files:

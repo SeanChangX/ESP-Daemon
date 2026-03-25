@@ -81,16 +81,16 @@ jobs:
           }
 
           if [ -f "$PROD_DIR/firmware.bin" ]; then
-            cp "$PROD_DIR/firmware.bin" dist/firmware-product.bin
-            echo "firmware-product.bin copied"
+            cp "$PROD_DIR/firmware.bin" dist/firmware-esp-daemon.bin
+            echo "firmware-esp-daemon.bin copied"
           else
             echo "Product firmware.bin not found"
             exit 1
           fi
 
           if [ -f "$ESTOP_DIR/firmware.bin" ]; then
-            cp "$ESTOP_DIR/firmware.bin" dist/firmware-estop.bin
-            echo "firmware-estop.bin copied"
+            cp "$ESTOP_DIR/firmware.bin" dist/firmware-e-stop.bin
+            echo "firmware-e-stop.bin copied"
           else
             echo "E-STOP firmware.bin not found"
             exit 1
@@ -100,16 +100,16 @@ jobs:
           ESTOP_FS="$(pick_fs_image "$ESTOP_DIR")" || true
 
           if [ -n "$PROD_FS" ]; then
-            cp "$PROD_FS" dist/filesystem-product.bin
-            echo "filesystem-product.bin copied from $(basename "$PROD_FS")"
+            cp "$PROD_FS" dist/filesystem-esp-daemon.bin
+            echo "filesystem-esp-daemon.bin copied from $(basename "$PROD_FS")"
           else
             echo "Product filesystem image not found"
             exit 1
           fi
 
           if [ -n "$ESTOP_FS" ]; then
-            cp "$ESTOP_FS" dist/filesystem-estop.bin
-            echo "filesystem-estop.bin copied from $(basename "$ESTOP_FS")"
+            cp "$ESTOP_FS" dist/filesystem-e-stop.bin
+            echo "filesystem-e-stop.bin copied from $(basename "$ESTOP_FS")"
           else
             echo "E-STOP filesystem image not found"
             exit 1
@@ -143,10 +143,10 @@ jobs:
           timestamp = os.environ["TIMESTAMP"]
 
           files_to_publish = [
-              "firmware-product.bin",
-              "firmware-estop.bin",
-              "filesystem-product.bin",
-              "filesystem-estop.bin",
+              "firmware-esp-daemon.bin",
+              "firmware-e-stop.bin",
+              "filesystem-esp-daemon.bin",
+              "filesystem-e-stop.bin",
               "bootloader.bin",
               "partitions.bin",
           ]
@@ -158,13 +158,13 @@ jobs:
               "variants": {
                   "product": {
                       "label": "ESP-Daemon",
-                      "firmware": "firmware-product.bin",
-                      "filesystem": "filesystem-product.bin"
+                      "firmware": "firmware-esp-daemon.bin",
+                      "filesystem": "filesystem-esp-daemon.bin"
                   },
                   "estop": {
                       "label": "ESP-Daemon E-STOP",
-                      "firmware": "firmware-estop.bin",
-                      "filesystem": "filesystem-estop.bin"
+                      "firmware": "firmware-e-stop.bin",
+                      "filesystem": "filesystem-e-stop.bin"
                   }
               },
               "files": {}

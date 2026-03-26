@@ -159,14 +159,14 @@ textarea:focus-visible {
   margin-left: 0.65rem;
   display: flex;
   flex-direction: row;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: stretch;
   gap: 0.38rem;
   font-size: 0.72rem;
   line-height: 1.3;
   text-align: left;
   width: fit-content;
-  max-width: min(22rem, 92vw);
+  max-width: min(34rem, 92vw);
   min-width: 0;
   padding: 0;
   border: none;
@@ -1984,7 +1984,6 @@ button.modern-floating-btn {
 
 @media (max-width: 768px) {
   :root {
-    /* Title + one row of MAC / VER chips */
     --topnav-offset: 6.85rem;
   }
 

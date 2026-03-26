@@ -6,6 +6,9 @@
 #include "led_control.h"
 #include "ros_node.h"
 #include "wifi_config.h"
+#if ENABLE_SENSOR_TASK
+#include "voltmeter.h"
+#endif
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -126,10 +129,26 @@ bool applySettingsUpdate(const JsonObjectConst& updateObj, String& updateError) 
 
   refreshNetworkIdentity();
   refreshESPNowChannel();
-  AppSettingsReadGuard settingsGuard;
-  if (settingsGuard.settings().runtime_led_enabled) {
+  bool runtimeLedEnabled = false;
+#if ENABLE_SENSOR_TASK
+  bool runtimeSensorEnabled = false;
+#endif
+  {
+    AppSettingsReadGuard settingsGuard;
+    runtimeLedEnabled = settingsGuard.settings().runtime_led_enabled;
+#if ENABLE_SENSOR_TASK
+    runtimeSensorEnabled = settingsGuard.settings().runtime_sensor_enabled;
+#endif
+  }
+
+  if (runtimeLedEnabled) {
     initLED();
   }
+#if ENABLE_SENSOR_TASK
+  if (runtimeSensorEnabled) {
+    initVoltmeter();
+  }
+#endif
   return true;
 }
 

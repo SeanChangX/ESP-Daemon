@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <freertos/semphr.h>
 
 namespace {
 
@@ -12,7 +13,8 @@ constexpr size_t kCapacity = 2u * 60u * 60u;
 
 float g_buf[kCapacity];
 size_t g_count = 0;
-portMUX_TYPE g_mux = portMUX_INITIALIZER_UNLOCKED;
+StaticSemaphore_t g_mutex_buffer;
+SemaphoreHandle_t g_mutex = nullptr;
 
 // NOTE: telemetryLogGetJson() runs in the synchronous webserver task context.
 // Avoid large stack allocations here (stack protection fault on ESP32-C3).
@@ -26,6 +28,27 @@ uint32_t g_session_start_ms        = 0;
 uint32_t g_last_session_uptime_sec = 0;
 
 uint32_t g_last_push_ms = 0;
+
+void ensureMutex() {
+  if (g_mutex != nullptr) {
+    return;
+  }
+  g_mutex = xSemaphoreCreateMutexStatic(&g_mutex_buffer);
+}
+
+bool lockTelemetry() {
+  ensureMutex();
+  if (g_mutex == nullptr) {
+    return false;
+  }
+  return xSemaphoreTake(g_mutex, portMAX_DELAY) == pdTRUE;
+}
+
+void unlockTelemetry() {
+  if (g_mutex != nullptr) {
+    xSemaphoreGive(g_mutex);
+  }
+}
 
 void clearSessionUnlocked(uint32_t nowMs) {
   g_count                   = 0;
@@ -177,7 +200,10 @@ void appendSeriesJson(String& out, const float* series, size_t count, size_t poi
 }  // namespace
 
 void telemetryLogInit() {
-  portENTER_CRITICAL(&g_mux);
+  const bool locked = lockTelemetry();
+  if (!locked) {
+    return;
+  }
   g_count                       = 0;
   g_connected_prev              = false;
   g_capturing                   = false;
@@ -185,13 +211,15 @@ void telemetryLogInit() {
   g_session_start_ms            = 0;
   g_last_session_uptime_sec     = 0;
   g_last_push_ms                = 0;
-  portEXIT_CRITICAL(&g_mux);
+  unlockTelemetry();
 }
 
 void telemetryLogMaybePush(float voltage_v, bool pack_connected) {
   const uint32_t now = millis();
-
-  portENTER_CRITICAL(&g_mux);
+  const bool locked = lockTelemetry();
+  if (!locked) {
+    return;
+  }
 
   // Detect connect edge: start a new discharge session.
   if (pack_connected && !g_connected_prev) {
@@ -210,13 +238,13 @@ void telemetryLogMaybePush(float voltage_v, bool pack_connected) {
 
   // Only capture while connected.
   if (!g_capturing) {
-    portEXIT_CRITICAL(&g_mux);
+    unlockTelemetry();
     return;
   }
 
   // Rate limit to 1 Hz.
   if (g_last_push_ms != 0 && (uint32_t)(now - g_last_push_ms) < kIntervalMs) {
-    portEXIT_CRITICAL(&g_mux);
+    unlockTelemetry();
     return;
   }
   g_last_push_ms = now;
@@ -229,7 +257,7 @@ void telemetryLogMaybePush(float voltage_v, bool pack_connected) {
     g_capturing = false;
   }
 
-  portEXIT_CRITICAL(&g_mux);
+  unlockTelemetry();
 }
 
 String telemetryLogGetJson(bool full, size_t max_points) {
@@ -240,7 +268,22 @@ String telemetryLogGetJson(bool full, size_t max_points) {
   bool     truncated        = false;
   bool     connected_now    = false;
 
-  portENTER_CRITICAL(&g_mux);
+  const bool locked = lockTelemetry();
+  if (!locked) {
+    String out;
+    out.reserve(160);
+    out += "{";
+    out += "\"periodMs\":";
+    out += String(kIntervalMs);
+    out += ",\"capacity\":";
+    out += String(kCapacity);
+    out += ",\"count\":0,\"points\":0,\"deviceMs\":";
+    out += String(millis());
+    out += ",\"uptimeSec\":0,\"sessionStartMs\":0";
+    out += ",\"truncated\":false,\"connectedNow\":false,\"downsampled\":false";
+    out += ",\"error\":\"telemetry-lock-unavailable\",\"v\":[]}";
+    return out;
+  }
   count = g_count;
   device_ms = millis();
   truncated = g_truncated;
@@ -262,7 +305,7 @@ String telemetryLogGetJson(bool full, size_t max_points) {
     // If we already disconnected, preserve the ended uptime.
     uptime_sec = g_last_session_uptime_sec;
   }
-  portEXIT_CRITICAL(&g_mux);
+  unlockTelemetry();
 
   const size_t points = decimatedPointCount(count, full, max_points);
   const bool   downsampled = (points < count);

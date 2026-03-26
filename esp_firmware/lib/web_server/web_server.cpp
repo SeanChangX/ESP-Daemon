@@ -63,15 +63,13 @@ static void handleDeviceInfoGet() {
   snprintf(macStr, sizeof(macStr), "%02X-%02X-%02X-%02X-%02X-%02X",
            macBytes[0], macBytes[1], macBytes[2], macBytes[3], macBytes[4], macBytes[5]);
   doc["mac"] = macStr;
-  {
-    AppSettingsReadGuard settingsGuard;
-    doc["controlPanelUrl"] = settingsGuard.settings().control_panel_url;
-  }
+  AppSettingsReadGuard settingsGuard;
+  const AppSettings& settings = settingsGuard.settings();
+  doc["controlPanelUrl"] = settings.control_panel_url;
 #if APP_MODE == APP_MODE_ESTOP
   doc["settingsPinRequired"] = false;
 #else
-  AppSettingsReadGuard settingsGuard;
-  doc["settingsPinRequired"] = settingsGuard.settings().pin_protection_enabled;
+  doc["settingsPinRequired"] = settings.pin_protection_enabled;
 #endif
 
   String output;

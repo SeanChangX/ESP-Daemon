@@ -21,6 +21,7 @@
 namespace {
 
 bool g_espnowReady = false;
+constexpr char kEStopPayload[] = "STOP";
 
 int resolveEffectiveEspNowChannel() {
   const bool wifiConnected = (WiFi.status() == WL_CONNECTED);
@@ -62,6 +63,57 @@ void applyEspNowChannel(bool verboseLog) {
 
 #if APP_MODE == APP_MODE_DAEMON
 
+constexpr uint32_t kEmergencyTriggerMinIntervalMs = 50;
+constexpr size_t   kEmergencySourceThrottleMax = 16;
+
+struct EmergencySourceThrottleEntry {
+  bool used = false;
+  std::array<uint8_t, 6> mac = {0, 0, 0, 0, 0, 0};
+  unsigned long last_trigger_ms = 0;
+};
+
+std::array<EmergencySourceThrottleEntry, kEmergencySourceThrottleMax> g_emergencyThrottle = {};
+
+bool shouldThrottleEmergencySource(const uint8_t* mac_addr, unsigned long now_ms) {
+  size_t free_index = g_emergencyThrottle.size();
+  size_t oldest_index = 0;
+  uint32_t oldest_age_ms = 0;
+  bool oldest_set = false;
+
+  for (size_t i = 0; i < g_emergencyThrottle.size(); ++i) {
+    EmergencySourceThrottleEntry& entry = g_emergencyThrottle[i];
+    if (!entry.used) {
+      if (free_index == g_emergencyThrottle.size()) {
+        free_index = i;
+      }
+      continue;
+    }
+
+    if (memcmp(entry.mac.data(), mac_addr, 6) == 0) {
+      if (entry.last_trigger_ms != 0 &&
+          static_cast<uint32_t>(now_ms - entry.last_trigger_ms) < kEmergencyTriggerMinIntervalMs) {
+        return true;
+      }
+      entry.last_trigger_ms = now_ms;
+      return false;
+    }
+
+    const uint32_t age_ms = static_cast<uint32_t>(now_ms - entry.last_trigger_ms);
+    if (!oldest_set || age_ms > oldest_age_ms) {
+      oldest_index = i;
+      oldest_age_ms = age_ms;
+      oldest_set = true;
+    }
+  }
+
+  const size_t target_index = (free_index < g_emergencyThrottle.size()) ? free_index : oldest_index;
+  EmergencySourceThrottleEntry& target = g_emergencyThrottle[target_index];
+  target.used = true;
+  memcpy(target.mac.data(), mac_addr, 6);
+  target.last_trigger_ms = now_ms;
+  return false;
+}
+
 bool resolveEmergencyTargetsForSource(
   const uint8_t* mac_addr,
   bool& target_group1,
@@ -92,11 +144,21 @@ void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* incomingData, in
     return;
   }
 
+  if (len != static_cast<int>(sizeof(kEStopPayload) - 1) ||
+      memcmp(incomingData, kEStopPayload, sizeof(kEStopPayload) - 1) != 0) {
+    return;
+  }
+
   const uint8_t* mac_addr = info->src_addr;
   bool targetGroup1 = false;
   bool targetGroup2 = false;
   bool targetGroup3 = false;
   if (!resolveEmergencyTargetsForSource(mac_addr, targetGroup1, targetGroup2, targetGroup3)) {
+    return;
+  }
+
+  const unsigned long now = millis();
+  if (shouldThrottleEmergencySource(mac_addr, now)) {
     return;
   }
 
@@ -115,7 +177,6 @@ constexpr uint32_t kEStopSendIntervalMs       = 80;
 constexpr uint32_t kEStopDebounceMs           = 35;
 constexpr uint32_t kEStopPeerEnsureIntervalMs = 1000;
 constexpr uint16_t kWledHttpTimeoutMs         = 1500;
-constexpr char     kEStopPayload[]            = "STOP";
 // Cybertruck-style boot cue + standard factory E-STOP alarm (passive buzzer approximation).
 constexpr uint16_t kBuzzerAlarmOnMs           = 300;
 constexpr uint16_t kBuzzerAlarmOffMs          = 240;
@@ -439,9 +500,7 @@ void updateBuzzer() {
   }
 }
 
-String buildRouteSignature() {
-  AppSettingsReadGuard settingsGuard;
-  const AppSettings& settings = settingsGuard.settings();
+String buildRouteSignature(const AppSettings& settings) {
   String signature;
   signature.reserve(64);
   const auto& routes = settings.estop_routes;
@@ -530,7 +589,7 @@ void ensureAllRoutePeersConfigured(bool verboseLog) {
 void rebuildEStopRoutesFromSettings(bool verboseLog) {
   AppSettingsReadGuard settingsGuard;
   const AppSettings& settings = settingsGuard.settings();
-  const String signature = buildRouteSignature();
+  const String signature = buildRouteSignature(settings);
   if (signature == g_estopRouteSignature) {
     return;
   }

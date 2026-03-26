@@ -22,9 +22,7 @@ public:
 
 } // namespace
 
-bool saveAppSettings() {
-  ScopedSettingsLock lock;
-
+bool saveAppSettingsUnlocked() {
   JsonDocument doc;
   app_settings_internal::appSettingsToJsonUnlocked(doc, true);
 
@@ -42,10 +40,22 @@ bool saveAppSettings() {
   return written > 0;
 }
 
+bool saveAppSettings() {
+  ScopedSettingsLock lock;
+  return saveAppSettingsUnlocked();
+}
+
 bool resetAppSettingsToDefaults() {
   ScopedSettingsLock lock;
+  AppSettings backup = app_settings_internal::mutableSettings();
   app_settings_internal::applyDefaultsUnlocked();
-  return saveAppSettings();
+  if (saveAppSettingsUnlocked()) {
+    return true;
+  }
+
+  // Keep runtime state consistent with failed persistence.
+  app_settings_internal::mutableSettings() = backup;
+  return false;
 }
 
 bool eraseAppSettingsFromNvs() {

@@ -23,7 +23,8 @@ bool netWizardConfigured              = false;
 bool mdnsStarted                      = false;
 bool netWizardHttpReleased            = false;
 bool restartAfterProvisioningPending  = false;
-unsigned long restartAfterProvisioningAtMs = 0;
+unsigned long restartAfterProvisioningStartedMs = 0;
+unsigned long restartAfterProvisioningDelayMs   = 0;
 String mdnsName;
 
 String getProvisioningSsid() {
@@ -83,6 +84,7 @@ void ensurePortalIfDisconnected() {
   static    unsigned long lastReconnectOnlyLogMs    = 0;
   constexpr unsigned long kPortalRestartCooldownMs  = 30000;
   constexpr unsigned long kPortalStartGraceMs       = 45000;
+  constexpr unsigned long kPortalForceWithCredsMs   = 300000;
 
   if (WiFi.status() == WL_CONNECTED) {
     disconnectedSinceMs = 0;
@@ -115,11 +117,20 @@ void ensurePortalIfDisconnected() {
   // users back into captive portal after successful provisioning.
   const char* savedSsid = netWizard.getSSID();
   if (savedSsid != nullptr && std::strlen(savedSsid) > 0) {
+    const unsigned long disconnectedForMs = now - disconnectedSinceMs;
+    if (disconnectedForMs < kPortalForceWithCredsMs) {
+      if ((now - lastReconnectOnlyLogMs) >= 30000) {
+        lastReconnectOnlyLogMs = now;
+        DAEMON_LOGF("WiFi disconnected, retrying saved SSID (%s), portal suppressed\n", savedSsid);
+      }
+      return;
+    }
+
     if ((now - lastReconnectOnlyLogMs) >= 30000) {
       lastReconnectOnlyLogMs = now;
-      DAEMON_LOGF("WiFi disconnected, retrying saved SSID (%s), portal suppressed\n", savedSsid);
+      DAEMON_LOGF("WiFi disconnected for %lus, forcing portal despite saved SSID (%s)\n",
+                  disconnectedForMs / 1000UL, savedSsid);
     }
-    return;
   }
 
   if (netWizard.getPortalState() == NetWizardPortalState::IDLE) {
@@ -233,7 +244,8 @@ void configureNetWizard() {
         if (!restartAfterProvisioningPending) {
           constexpr unsigned long kRestartDelayMs = 1500;
           restartAfterProvisioningPending = true;
-          restartAfterProvisioningAtMs = millis() + kRestartDelayMs;
+          restartAfterProvisioningStartedMs = millis();
+          restartAfterProvisioningDelayMs   = kRestartDelayMs;
           DAEMON_LOGLN("Provisioning success -> reboot scheduled");
         }
         break;
@@ -259,8 +271,8 @@ void handleProvisioningRestart() {
     return;
   }
 
-  const long remainingMs = static_cast<long>(restartAfterProvisioningAtMs - millis());
-  if (remainingMs > 0) {
+  const unsigned long now = millis();
+  if ((now - restartAfterProvisioningStartedMs) < restartAfterProvisioningDelayMs) {
     return;
   }
 

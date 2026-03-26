@@ -8,16 +8,25 @@
 #endif
 
 float g_battery_voltage = 0.0f;
-uint32_t Vbatt = 0;
-volatile BatteryPackStatus g_battery_status = BATTERY_STATUS_DISCONNECTED;
+BatteryPackStatus g_battery_status = BATTERY_STATUS_DISCONNECTED;
 volatile int interruptCounter = 0;
 hw_timer_t* _timer = NULL;
 portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE batteryMux = portMUX_INITIALIZER_UNLOCKED;
+constexpr int kMaxPendingSamples = 1;
 
 void initVoltmeter() {
   AppSettingsReadGuard settingsGuard;
   const AppSettings& settings = settingsGuard.settings();
   pinMode(settings.voltmeter_pin, INPUT);
+  portENTER_CRITICAL(&timerMux);
+  interruptCounter = 0;
+  portEXIT_CRITICAL(&timerMux);
+
+  if (_timer != NULL) {
+    timerEnd(_timer);
+    _timer = NULL;
+  }
 
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && (ESP_ARDUINO_VERSION_MAJOR >= 3)
   _timer = timerBegin(1000000);  // 1 MHz timer base -> alarm value is in microseconds
@@ -33,7 +42,9 @@ void initVoltmeter() {
 
 void IRAM_ATTR onTimer() {
   portENTER_CRITICAL_ISR(&timerMux);
-  interruptCounter++;
+  if (interruptCounter < kMaxPendingSamples) {
+    interruptCounter++;
+  }
   portEXIT_CRITICAL_ISR(&timerMux);
 }
 
@@ -65,11 +76,11 @@ void voltmeter() {
     batteryLowThreshold = settings.battery_low_threshold;
   }
 
-  Vbatt = 0;
+  uint32_t sampleMvSum = 0;
   for (uint16_t i = 0; i < sampleCount; i++) {
-    Vbatt += analogReadMilliVolts(voltmeterPin);
+    sampleMvSum += analogReadMilliVolts(voltmeterPin);
   }
-  const float raw_pack_v = dividerCalibration * Vbatt / sampleCount / 1000.0f + voltmeterOffset;
+  const float raw_pack_v = dividerCalibration * sampleMvSum / sampleCount / 1000.0f + voltmeterOffset;
   const bool pack_connected_instant = raw_pack_v >= batteryDisconnectThreshold;
 
   if (pack_connected_instant) {
@@ -91,34 +102,54 @@ void voltmeter() {
   }
 
   if (!pack_connected_filtered) {
+    portENTER_CRITICAL(&batteryMux);
     g_battery_voltage = 0.0f;
-    g_battery_status  = BATTERY_STATUS_DISCONNECTED;
+    g_battery_status = BATTERY_STATUS_DISCONNECTED;
+    portEXIT_CRITICAL(&batteryMux);
     batteryEstimateUpdate(0.0f, false);
     telemetryLogMaybePush(0.0f, false);
   } else {
+    const BatteryPackStatus status = (raw_pack_v < batteryLowThreshold) ? BATTERY_STATUS_LOW : BATTERY_STATUS_NORMAL;
+    portENTER_CRITICAL(&batteryMux);
     g_battery_voltage = raw_pack_v;
-    g_battery_status  = (g_battery_voltage < batteryLowThreshold) ? BATTERY_STATUS_LOW : BATTERY_STATUS_NORMAL;
-    batteryEstimateUpdate(g_battery_voltage, true);
-    telemetryLogMaybePush(g_battery_voltage, true);
+    g_battery_status = status;
+    portEXIT_CRITICAL(&batteryMux);
+    batteryEstimateUpdate(raw_pack_v, true);
+    telemetryLogMaybePush(raw_pack_v, true);
   }
 }
 
 float getBatteryVoltage() {
-  return g_battery_voltage;
+  portENTER_CRITICAL(&batteryMux);
+  const float voltage = g_battery_voltage;
+  portEXIT_CRITICAL(&batteryMux);
+  return voltage;
 }
 
 BatteryPackStatus getBatteryPackStatus() {
-  return g_battery_status;
+  portENTER_CRITICAL(&batteryMux);
+  const BatteryPackStatus status = g_battery_status;
+  portEXIT_CRITICAL(&batteryMux);
+  return status;
 }
 
 void voltmeterTask(void* pvParameters) {
+  (void)pvParameters;
   for (;;) {
-    voltmeter();
+    bool shouldSample = false;
+
+    portENTER_CRITICAL(&timerMux);
     if (interruptCounter > 0) {
-      portENTER_CRITICAL(&timerMux);
       interruptCounter--;
-      portEXIT_CRITICAL(&timerMux);
+      shouldSample = true;
     }
-    vTaskDelay(100 / portTICK_PERIOD_MS);
+    portEXIT_CRITICAL(&timerMux);
+
+    if (shouldSample) {
+      voltmeter();
+      continue;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(5));
   }
 }

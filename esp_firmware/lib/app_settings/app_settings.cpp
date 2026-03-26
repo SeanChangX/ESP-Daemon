@@ -604,8 +604,6 @@ bool parseMacString(const String& text, std::array<uint8_t, 6>& out) {
 }
 
 void appSettingsToJsonImpl(JsonDocument& doc, bool include_pin_code) {
-  syncLegacyEStopFieldsFromRoutes();
-
   doc["deviceName"] = g_settings.device_name;
 
   doc["pinProtectionEnabled"] = g_settings.pin_protection_enabled;
@@ -686,6 +684,6 @@ void appSettingsToJsonImpl(JsonDocument& doc, bool include_pin_code) {
 }
 
 void appSettingsToJson(JsonDocument& doc, bool include_pin_code) {
-  AppSettingsWriteGuard guard;
+  AppSettingsReadGuard guard;
   appSettingsToJsonImpl(doc, include_pin_code);
 }

@@ -12,11 +12,8 @@ enum led_mode {
   SIMA_CMD
 };
 
-extern volatile int mode;
-extern unsigned long last_override_time;
-extern unsigned long override_duration;
-
 void initLED();
+void setLedOverrideState(int new_mode, unsigned long timestamp_ms);
 void colorWipe(uint32_t color, int wait);
 void rainbow(int wait);
 void LEDTask(void* pvParameters);

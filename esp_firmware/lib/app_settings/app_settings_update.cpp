@@ -366,6 +366,7 @@ bool updateAppSettingsFromJson(const JsonObjectConst& json, String& error) {
         if (pins[i].value != pins[j].value) {
           continue;
         }
+        settings = backup;
         error = String("Duplicate GPIO pin: ") +
                 pins[i].name + " and " + pins[j].name +
                 " both use GPIO " + String(pins[i].value);
@@ -445,8 +446,8 @@ bool updateAppSettingsFromJson(const JsonObjectConst& json, String& error) {
 }
 
 bool verifySettingsPin(const String& pin) {
-  ScopedSettingsWriteLock guard;
-  AppSettings& settings = app_settings_internal::mutableSettings();
+  AppSettingsReadGuard guard;
+  const AppSettings& settings = guard.settings();
   if (!settings.pin_protection_enabled) {
     return true;
   }

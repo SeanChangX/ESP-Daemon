@@ -5,6 +5,7 @@
 #include "voltmeter.h"
 
 #include <Arduino.h>
+#include <freertos/semphr.h>
 #if ENABLE_MICROROS
 #include <micro_ros_platformio.h>
 #endif
@@ -49,22 +50,72 @@ static volatile bool control_group1_power_enabled = false;
 static volatile bool control_group2_power_enabled = false;
 static volatile bool control_group3_power_enabled = false;
 
+namespace {
+
+SemaphoreHandle_t g_power_control_mutex = nullptr;
+
+void ensurePowerControlMutex() {
+  if (g_power_control_mutex != nullptr) {
+    return;
+  }
+  g_power_control_mutex = xSemaphoreCreateRecursiveMutex();
+}
+
+void lockPowerControl() {
+  ensurePowerControlMutex();
+  if (g_power_control_mutex != nullptr) {
+    xSemaphoreTakeRecursive(g_power_control_mutex, portMAX_DELAY);
+  }
+}
+
+void unlockPowerControl() {
+  if (g_power_control_mutex != nullptr) {
+    xSemaphoreGiveRecursive(g_power_control_mutex);
+  }
+}
+
+class PowerControlGuard {
+public:
+  PowerControlGuard() {
+    lockPowerControl();
+  }
+
+  ~PowerControlGuard() {
+    unlockPowerControl();
+  }
+
+  PowerControlGuard(const PowerControlGuard&) = delete;
+  PowerControlGuard& operator=(const PowerControlGuard&) = delete;
+};
+
+} // namespace
+
 #if ENABLE_MICROROS
 #define RCCHECK(fn)        { rcl_ret_t temp_rc = fn; if ((temp_rc != RCL_RET_OK)) { error_loop(); } }
 #define RCSOFTCHECK(fn)    { rcl_ret_t temp_rc = fn; if ((temp_rc != RCL_RET_OK)) {} }
 
 void error_loop() { while (1) { delay(100); } }
+
+void logRclResult(const char* step, rcl_ret_t rc) {
+  if (rc != RCL_RET_OK) {
+    DAEMON_LOGF("micro-ROS %s failed (%d)\n", step, static_cast<int>(rc));
+  }
+}
+
+bool ensureRclOk(const char* step, rcl_ret_t rc) {
+  if (rc == RCL_RET_OK) {
+    return true;
+  }
+  DAEMON_LOGF("micro-ROS %s failed (%d)\n", step, static_cast<int>(rc));
+  return false;
+}
 #endif
 
-static bool isSwitchEnabled(uint8_t pin) {
-  AppSettingsReadGuard settingsGuard;
-  const bool activeHigh = settingsGuard.settings().switch_active_high;
+static bool isSwitchEnabled(uint8_t pin, bool activeHigh) {
   return digitalRead(pin) == (activeHigh ? HIGH : LOW);
 }
 
-static uint8_t getSwitchPinForChannel(PowerControlChannel channel) {
-  AppSettingsReadGuard settingsGuard;
-  const AppSettings& settings = settingsGuard.settings();
+static uint8_t getSwitchPinForChannel(const AppSettings& settings, PowerControlChannel channel) {
   switch (channel) {
     case POWER_CHANNEL_GROUP1:
       return settings.control_group1_switch_pin;
@@ -81,16 +132,14 @@ static void setOutputPower(uint8_t pin, bool enabled, bool powerActiveHigh) {
   digitalWrite(pin, enabled ? (powerActiveHigh ? HIGH : LOW) : (powerActiveHigh ? LOW : HIGH));
 }
 
-static void applyPowerOutputs(bool group1_enabled, bool group2_enabled, bool group3_enabled) {
-  AppSettingsReadGuard settingsGuard;
-  const AppSettings& settings = settingsGuard.settings();
+static void applyPowerOutputs(const AppSettings& settings, bool group1_enabled, bool group2_enabled, bool group3_enabled) {
   setOutputPower(settings.control_group1_power_pin,           group1_enabled, settings.power_active_high);
   setOutputPower(settings.control_group2_power_12v_pin,       group2_enabled, settings.power_active_high);
   setOutputPower(settings.control_group2_power_7v4_pin,       group2_enabled, settings.power_active_high);
   setOutputPower(settings.control_group3_power_pin,           group3_enabled, settings.power_active_high);
 }
 
-static void refreshPowerControlState() {
+static void refreshPowerControlStateLocked() {
   static bool has_prev_switch_sample = false;
   static bool prev_group1_switch     = false;
   static bool prev_group2_switch     = false;
@@ -98,9 +147,10 @@ static void refreshPowerControlState() {
 
   AppSettingsReadGuard settingsGuard;
   const AppSettings& settings = settingsGuard.settings();
-  const bool new_group1_switch = isSwitchEnabled(settings.control_group1_switch_pin);
-  const bool new_group2_switch = isSwitchEnabled(settings.control_group2_switch_pin);
-  const bool new_group3_switch = isSwitchEnabled(settings.control_group3_switch_pin);
+  const bool activeHigh = settings.switch_active_high;
+  const bool new_group1_switch = isSwitchEnabled(settings.control_group1_switch_pin, activeHigh);
+  const bool new_group2_switch = isSwitchEnabled(settings.control_group2_switch_pin, activeHigh);
+  const bool new_group3_switch = isSwitchEnabled(settings.control_group3_switch_pin, activeHigh);
 
   const bool group1_switch_changed = has_prev_switch_sample && (new_group1_switch != prev_group1_switch);
   const bool group2_switch_changed = has_prev_switch_sample && (new_group2_switch != prev_group2_switch);
@@ -169,7 +219,7 @@ static void refreshPowerControlState() {
   const bool group3_changed = (new_group3_power != control_group3_power_enabled);
 
   if (group1_changed || group2_changed || group3_changed) {
-    applyPowerOutputs(new_group1_power, new_group2_power, new_group3_power);
+    applyPowerOutputs(settings, new_group1_power, new_group2_power, new_group3_power);
   }
 
   prev_group1_switch = new_group1_switch;
@@ -178,8 +228,7 @@ static void refreshPowerControlState() {
   has_prev_switch_sample = true;
 
   if (group1_changed) {
-    mode = new_group1_power ? EME_ENABLE : EME_DISABLE;
-    last_override_time = millis();
+    setLedOverrideState(new_group1_power ? EME_ENABLE : EME_DISABLE, millis());
   }
 
   control_group1_power_enabled = new_group1_power;
@@ -215,10 +264,12 @@ void control_group3_enable_callback(const void* msgin) {
 #endif
 
 void updatePowerControls() {
-  refreshPowerControlState();
+  PowerControlGuard guard;
+  refreshPowerControlStateLocked();
 }
 
 void setPowerControlOverride(PowerControlChannel channel, bool enabled) {
+  PowerControlGuard guard;
   switch (channel) {
     case POWER_CHANNEL_GROUP1:
       if (enabled) {
@@ -238,10 +289,11 @@ void setPowerControlOverride(PowerControlChannel channel, bool enabled) {
       return;
   }
 
-  refreshPowerControlState();
+  refreshPowerControlStateLocked();
 }
 
 void triggerRemoteEmergencyStop(bool target_group1, bool target_group2, bool target_group3) {
+  PowerControlGuard guard;
   if (!target_group1 && !target_group2 && !target_group3) {
     return;
   }
@@ -258,10 +310,11 @@ void triggerRemoteEmergencyStop(bool target_group1, bool target_group2, bool tar
   if (target_group3) {
     control_group3_remote_mode = RemoteRailMode::RemoteForceOff;
   }
-  refreshPowerControlState();
+  refreshPowerControlStateLocked();
 }
 
 bool getPowerControlState(PowerControlChannel channel) {
+  PowerControlGuard guard;
   switch (channel) {
     case POWER_CHANNEL_GROUP1:
       return control_group1_power_enabled;
@@ -275,83 +328,171 @@ bool getPowerControlState(PowerControlChannel channel) {
 }
 
 bool getPhysicalSwitchState(PowerControlChannel channel) {
-  return isSwitchEnabled(getSwitchPinForChannel(channel));
+  AppSettingsReadGuard settingsGuard;
+  const AppSettings& settings = settingsGuard.settings();
+  return isSwitchEnabled(getSwitchPinForChannel(settings, channel), settings.switch_active_high);
 }
 
 int getPhysicalSwitchRawLevel(PowerControlChannel channel) {
-  return digitalRead(getSwitchPinForChannel(channel));
+  AppSettingsReadGuard settingsGuard;
+  return digitalRead(getSwitchPinForChannel(settingsGuard.settings(), channel));
 }
 
 #if ENABLE_MICROROS
 // Free the resources allocated by micro-ROS
 void destroy_entities() {
-  rmw_context_t * rmw_context = rcl_context_get_rmw_context(&support.context);
-  (void) rmw_uros_set_context_entity_destroy_session_timeout(rmw_context, 0);
+  if (support.context.impl != nullptr) {
+    rmw_context_t* rmw_context = rcl_context_get_rmw_context(&support.context);
+    if (rmw_context != nullptr) {
+      (void)rmw_uros_set_context_entity_destroy_session_timeout(rmw_context, 0);
+    }
+  }
 
-  rcl_timer_fini(&timer);
-  rclc_executor_fini(&executor);
-  rcl_init_options_fini(&init_options);
-  rcl_node_fini(&node);
-  rclc_support_fini(&support);
+  logRclResult("rcl_timer_fini",                rcl_timer_fini(&timer));
+  logRclResult("rclc_executor_fini",            rclc_executor_fini(&executor));
+  logRclResult("rcl_subscription_fini(group1)", rcl_subscription_fini(&control_group1_enable_subscriber, &node));
+  logRclResult("rcl_subscription_fini(group2)", rcl_subscription_fini(&control_group2_enable_subscriber, &node));
+  logRclResult("rcl_subscription_fini(group3)", rcl_subscription_fini(&control_group3_enable_subscriber, &node));
+  logRclResult("rcl_publisher_fini(counter)",   rcl_publisher_fini(&counter_publisher, &node));
+  logRclResult("rcl_publisher_fini(battery)",   rcl_publisher_fini(&battery_voltage_publisher, &node));
+  logRclResult("rcl_node_fini",                 rcl_node_fini(&node));
+  logRclResult("rclc_support_fini",             rclc_support_fini(&support));
+  logRclResult("rcl_init_options_fini",         rcl_init_options_fini(&init_options));
 
-  rcl_publisher_fini(&counter_publisher, &node);
-  rcl_publisher_fini(&battery_voltage_publisher, &node);
-  rcl_subscription_fini(&control_group1_enable_subscriber, &node);
-  rcl_subscription_fini(&control_group2_enable_subscriber, &node);
-  rcl_subscription_fini(&control_group3_enable_subscriber, &node);
+  init_options                     = rcl_get_zero_initialized_init_options();
+  support                          = rclc_support_t();
+  node                             = rcl_get_zero_initialized_node();
+  timer                            = rcl_get_zero_initialized_timer();
+  executor                         = rclc_executor_get_zero_initialized_executor();
+  counter_publisher                = rcl_get_zero_initialized_publisher();
+  battery_voltage_publisher        = rcl_get_zero_initialized_publisher();
+  control_group1_enable_subscriber = rcl_get_zero_initialized_subscription();
+  control_group2_enable_subscriber = rcl_get_zero_initialized_subscription();
+  control_group3_enable_subscriber = rcl_get_zero_initialized_subscription();
 }
 
 bool create_entities() {
   AppSettingsReadGuard settingsGuard;
   const AppSettings& settings = settingsGuard.settings();
-  allocator = rcl_get_default_allocator();
-  init_options = rcl_get_zero_initialized_init_options();
-  rcl_init_options_init(&init_options, allocator);
-  rcl_init_options_set_domain_id(&init_options, settings.ros_domain_id);
-  rclc_support_init_with_options(&support, 0, NULL, &init_options, &allocator);
-  rclc_node_init_default(&node, settings.ros_node_name.c_str(), "", &support);
-  
-  rclc_timer_init_default(&timer, &support, RCL_MS_TO_NS(settings.ros_timer_ms), timer_callback);
 
-  rclc_publisher_init_default(
+  init_options                     = rcl_get_zero_initialized_init_options();
+  support                          = rclc_support_t();
+  node                             = rcl_get_zero_initialized_node();
+  timer                            = rcl_get_zero_initialized_timer();
+  executor                         = rclc_executor_get_zero_initialized_executor();
+  counter_publisher                = rcl_get_zero_initialized_publisher();
+  battery_voltage_publisher        = rcl_get_zero_initialized_publisher();
+  control_group1_enable_subscriber = rcl_get_zero_initialized_subscription();
+  control_group2_enable_subscriber = rcl_get_zero_initialized_subscription();
+  control_group3_enable_subscriber = rcl_get_zero_initialized_subscription();
+
+  allocator = rcl_get_default_allocator();
+  if (!ensureRclOk("rcl_init_options_init", rcl_init_options_init(&init_options, allocator))) {
+    destroy_entities();
+    return false;
+  }
+  if (!ensureRclOk("rcl_init_options_set_domain_id", rcl_init_options_set_domain_id(&init_options, settings.ros_domain_id))) {
+    destroy_entities();
+    return false;
+  }
+  if (!ensureRclOk("rclc_support_init_with_options", rclc_support_init_with_options(&support, 0, NULL, &init_options, &allocator))) {
+    destroy_entities();
+    return false;
+  }
+  if (!ensureRclOk("rclc_node_init_default", rclc_node_init_default(&node, settings.ros_node_name.c_str(), "", &support))) {
+    destroy_entities();
+    return false;
+  }
+
+  if (!ensureRclOk("rclc_timer_init_default",
+                   rclc_timer_init_default(&timer, &support, RCL_MS_TO_NS(settings.ros_timer_ms), timer_callback))) {
+    destroy_entities();
+    return false;
+  }
+
+  if (!ensureRclOk("rclc_publisher_init_default(counter)",
+                   rclc_publisher_init_default(
     &counter_publisher,
     &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
-    "/esp32_counter");
+    "/esp32_counter"))) {
+    destroy_entities();
+    return false;
+  }
 
-  rclc_publisher_init_default(
+  if (!ensureRclOk("rclc_publisher_init_default(battery)",
+                   rclc_publisher_init_default(
     &battery_voltage_publisher,
     &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
-    "/robot_status/battery_voltage");
+    "/robot_status/battery_voltage"))) {
+    destroy_entities();
+    return false;
+  }
 
 
   // Initialize executor with 4 handles (3 subscriptions + 1 timer)
   unsigned int num_handles = 4;
-  executor = rclc_executor_get_zero_initialized_executor();
-  rclc_executor_init(&executor, &support.context, num_handles, &allocator);
-  rclc_executor_add_timer(&executor, &timer);
+  if (!ensureRclOk("rclc_executor_init",
+                   rclc_executor_init(&executor, &support.context, num_handles, &allocator))) {
+    destroy_entities();
+    return false;
+  }
+  if (!ensureRclOk("rclc_executor_add_timer", rclc_executor_add_timer(&executor, &timer))) {
+    destroy_entities();
+    return false;
+  }
 
-  rclc_subscription_init_default(
+  if (!ensureRclOk("rclc_subscription_init_default(group1)",
+                   rclc_subscription_init_default(
     &control_group1_enable_subscriber,
     &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool),
-    "/robot_status/control_group1_enable");
-  rclc_executor_add_subscription(&executor, &control_group1_enable_subscriber, &control_group1_enable_msg, &control_group1_enable_callback, ON_NEW_DATA);
+    "/robot_status/control_group1_enable"))) {
+    destroy_entities();
+    return false;
+  }
+  if (!ensureRclOk("rclc_executor_add_subscription(group1)",
+                   rclc_executor_add_subscription(&executor, &control_group1_enable_subscriber,
+                                                  &control_group1_enable_msg, &control_group1_enable_callback,
+                                                  ON_NEW_DATA))) {
+    destroy_entities();
+    return false;
+  }
 
-  rclc_subscription_init_default(
+  if (!ensureRclOk("rclc_subscription_init_default(group2)",
+                   rclc_subscription_init_default(
     &control_group2_enable_subscriber,
     &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool),
-    "/robot_status/control_group2_enable");
-  rclc_executor_add_subscription(&executor, &control_group2_enable_subscriber, &control_group2_enable_msg, &control_group2_enable_callback, ON_NEW_DATA);
+    "/robot_status/control_group2_enable"))) {
+    destroy_entities();
+    return false;
+  }
+  if (!ensureRclOk("rclc_executor_add_subscription(group2)",
+                   rclc_executor_add_subscription(&executor, &control_group2_enable_subscriber,
+                                                  &control_group2_enable_msg, &control_group2_enable_callback,
+                                                  ON_NEW_DATA))) {
+    destroy_entities();
+    return false;
+  }
 
-  rclc_subscription_init_default(
+  if (!ensureRclOk("rclc_subscription_init_default(group3)",
+                   rclc_subscription_init_default(
     &control_group3_enable_subscriber,
     &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool),
-    "/robot_status/control_group3_enable");
-  rclc_executor_add_subscription(&executor, &control_group3_enable_subscriber, &control_group3_enable_msg, &control_group3_enable_callback, ON_NEW_DATA);
+    "/robot_status/control_group3_enable"))) {
+    destroy_entities();
+    return false;
+  }
+  if (!ensureRclOk("rclc_executor_add_subscription(group3)",
+                   rclc_executor_add_subscription(&executor, &control_group3_enable_subscriber,
+                                                  &control_group3_enable_msg, &control_group3_enable_callback,
+                                                  ON_NEW_DATA))) {
+    destroy_entities();
+    return false;
+  }
   
   return true;
 }

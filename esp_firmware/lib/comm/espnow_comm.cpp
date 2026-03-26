@@ -3,6 +3,9 @@
 #include "config.h"
 #include "app_settings.h"
 #include "wifi_config.h"
+#if APP_MODE == APP_MODE_ESTOP && ENABLE_SENSOR_TASK
+#include "voltmeter.h"
+#endif
 #if APP_MODE == APP_MODE_DAEMON
 #include "ros_node.h"
 #endif
@@ -182,6 +185,10 @@ constexpr uint16_t kBuzzerAlarmOnMs           = 300;
 constexpr uint16_t kBuzzerAlarmOffMs          = 240;
 constexpr uint16_t kBuzzerAlarmFreqAHz        = 1150;
 constexpr uint16_t kBuzzerAlarmFreqBHz        = 1150;
+constexpr uint16_t kBuzzerLowBatteryOnMs      = 200;
+constexpr uint16_t kBuzzerLowBatteryOffMs     = 600;
+constexpr uint16_t kBuzzerLowBatteryFreqAHz   = 820;
+constexpr uint16_t kBuzzerLowBatteryFreqBHz   = 740;
 constexpr uint16_t kBuzzerPwmAttachFreqHz     = 2000;
 constexpr uint8_t  kBuzzerPwmResolutionBits   = 8;
 constexpr uint8_t  kBuzzerPwmDuty             = 127;
@@ -230,7 +237,8 @@ String        g_wledStatus              = "disabled";
 enum class BuzzerMode : uint8_t {
   Off = 0,
   StartupTone,
-  Alarm
+  Alarm,
+  LowBattery
 };
 
 uint8_t       g_buzzerPinConfigured     = 255;
@@ -243,6 +251,98 @@ unsigned long g_buzzerPhaseStartedAtMs  = 0;
 size_t        g_buzzerStartupStep       = 0;
 bool          g_startupTonePlayed       = false;
 bool          g_wifiConnectedPrev       = false;
+
+bool isBatteryLikelyCharging() {
+#if ENABLE_SENSOR_TASK
+  // Charge detection by voltage trend:
+  // while in LOW state, if voltage rises steadily within a time window, treat as charging
+  // and temporarily mute low-battery buzzer.
+  constexpr float    kChargeDetectRiseV         = 0.02f;     // 20 mV rise to confirm charging trend
+  constexpr float    kChargeAnchorDropResetV    = 0.015f;    // refresh anchor when voltage falls
+  constexpr uint32_t kChargeDetectWindowMs      = 240000UL;  // 4 minutes
+  constexpr uint32_t kChargeMuteHoldMs          = 300000UL;  // keep muted for 5 minutes after detection
+  constexpr float    kChargeCancelDropFromPeakV = 0.06f;     // cancel if voltage falls far from charging peak
+
+  static bool              initialized      = false;
+  static BatteryPackStatus lastStatus       = BATTERY_STATUS_DISCONNECTED;
+  static float             anchorV          = 0.0f;
+  static unsigned long     anchorMs         = 0;
+  static float             chargePeakV      = 0.0f;
+  static bool              chargingDetected = false;
+  static unsigned long     chargeDetectedMs = 0;
+
+  const BatteryPackStatus status = getBatteryPackStatus();
+  const float voltage = getBatteryVoltage();
+  const unsigned long now = millis();
+
+  const bool connected = (status != BATTERY_STATUS_DISCONNECTED) && (voltage > 0.0f);
+  if (!connected) {
+    initialized = false;
+    chargingDetected = false;
+    lastStatus = status;
+    return false;
+  }
+
+  if (!initialized) {
+    initialized = true;
+    anchorV = voltage;
+    anchorMs = now;
+    chargePeakV = voltage;
+    chargingDetected = false;
+    chargeDetectedMs = 0;
+  }
+
+  if (status != lastStatus) {
+    anchorV = voltage;
+    anchorMs = now;
+    chargePeakV = voltage;
+    if (status != BATTERY_STATUS_LOW) {
+      chargingDetected = false;
+      chargeDetectedMs = 0;
+    }
+  }
+
+  if (voltage < (anchorV - kChargeAnchorDropResetV)) {
+    anchorV = voltage;
+    anchorMs = now;
+  } else if ((voltage - anchorV) >= kChargeDetectRiseV &&
+             (now - anchorMs) <= kChargeDetectWindowMs) {
+    chargingDetected = true;
+    chargeDetectedMs = now;
+    chargePeakV = voltage;
+    anchorV = voltage;
+    anchorMs = now;
+  } else if ((now - anchorMs) > kChargeDetectWindowMs) {
+    anchorV = voltage;
+    anchorMs = now;
+  }
+
+  if (chargingDetected) {
+    if (voltage > chargePeakV) {
+      chargePeakV = voltage;
+      chargeDetectedMs = now;
+    }
+
+    if ((chargePeakV - voltage) > kChargeCancelDropFromPeakV ||
+        (now - chargeDetectedMs) > kChargeMuteHoldMs) {
+      chargingDetected = false;
+    }
+  }
+
+  lastStatus = status;
+  return status == BATTERY_STATUS_LOW && chargingDetected;
+#else
+  return false;
+#endif
+}
+
+bool isLowBatteryAlertActive() {
+#if ENABLE_SENSOR_TASK
+  return getBatteryPackStatus() == BATTERY_STATUS_LOW && !isBatteryLikelyCharging();
+#else
+  return false;
+#endif
+}
 
 String normalizeWledBaseUrl() {
   AppSettingsReadGuard settingsGuard;
@@ -354,25 +454,40 @@ void playBuzzerTone(uint16_t freqHz) {
   }
 }
 
-void updateWledForAggregateSwitchState(bool pressed) {
-  if (pressed) {
-    if (g_buzzerEnabledConfigured) {
-      g_buzzerMode              = BuzzerMode::Alarm;
-      g_buzzerPhaseStartedAtMs  = millis();
-      g_buzzerAlarmUseAltTone   = false;
-      g_buzzerOutputOn          = true;
-      playBuzzerTone(kBuzzerAlarmFreqAHz);
-      g_buzzerAlarmUseAltTone   = true;
-    }
-    handleWledPressedEdge();
+void startAlarmTone() {
+  if (!g_buzzerEnabledConfigured) {
     return;
   }
-  if (g_buzzerMode == BuzzerMode::Alarm) {
-    g_buzzerMode                = BuzzerMode::Off;
-    stopBuzzerOutput();
-    g_buzzerOutputOn            = false;
-    g_buzzerStartupStep         = 0;
-    g_buzzerAlarmUseAltTone     = false;
+  g_buzzerMode             = BuzzerMode::Alarm;
+  g_buzzerPhaseStartedAtMs = millis();
+  g_buzzerOutputOn         = true;
+  g_buzzerAlarmUseAltTone  = true;
+  playBuzzerTone(kBuzzerAlarmFreqAHz);
+}
+
+void startLowBatteryTone() {
+  if (!g_buzzerEnabledConfigured) {
+    return;
+  }
+  g_buzzerMode             = BuzzerMode::LowBattery;
+  g_buzzerPhaseStartedAtMs = millis();
+  g_buzzerOutputOn         = true;
+  g_buzzerAlarmUseAltTone  = true;
+  playBuzzerTone(kBuzzerLowBatteryFreqAHz);
+}
+
+void stopBuzzerMode() {
+  g_buzzerMode            = BuzzerMode::Off;
+  g_buzzerOutputOn        = false;
+  g_buzzerStartupStep     = 0;
+  g_buzzerAlarmUseAltTone = false;
+  stopBuzzerOutput();
+}
+
+void updateWledForAggregateSwitchState(bool pressed) {
+  if (pressed) {
+    handleWledPressedEdge();
+    return;
   }
   handleWledReleasedEdge();
 }
@@ -440,9 +555,10 @@ void updateBuzzer() {
   applyBuzzerConfig(false);
 
   const bool wifiConnected = (WiFi.status() == WL_CONNECTED);
+  const bool lowBatteryAlert = isLowBatteryAlertActive();
   if (!g_startupTonePlayed && wifiConnected && !g_wifiConnectedPrev) {
     // Safety priority: never replace an active E-STOP alarm with startup tone.
-    if (!g_estopSwitchPressed && g_buzzerMode != BuzzerMode::Alarm) {
+    if (!g_estopSwitchPressed && !lowBatteryAlert && g_buzzerMode != BuzzerMode::Alarm) {
       startStartupTone();
     }
     g_startupTonePlayed = true;
@@ -451,6 +567,18 @@ void updateBuzzer() {
 
   if (!g_buzzerEnabledConfigured) {
     return;
+  }
+
+  if (g_estopSwitchPressed) {
+    if (g_buzzerMode != BuzzerMode::Alarm) {
+      startAlarmTone();
+    }
+  } else if (lowBatteryAlert) {
+    if (g_buzzerMode != BuzzerMode::LowBattery) {
+      startLowBatteryTone();
+    }
+  } else if (g_buzzerMode == BuzzerMode::Alarm || g_buzzerMode == BuzzerMode::LowBattery) {
+    stopBuzzerMode();
   }
 
   const unsigned long now = millis();
@@ -470,12 +598,26 @@ void updateBuzzer() {
     return;
   }
 
+  if (g_buzzerMode == BuzzerMode::LowBattery) {
+    const uint16_t holdMs = g_buzzerOutputOn ? kBuzzerLowBatteryOnMs : kBuzzerLowBatteryOffMs;
+    if ((now - g_buzzerPhaseStartedAtMs) >= holdMs) {
+      g_buzzerOutputOn = !g_buzzerOutputOn;
+      g_buzzerPhaseStartedAtMs = now;
+      if (g_buzzerOutputOn) {
+        const uint16_t freq = g_buzzerAlarmUseAltTone ? kBuzzerLowBatteryFreqBHz : kBuzzerLowBatteryFreqAHz;
+        g_buzzerAlarmUseAltTone = !g_buzzerAlarmUseAltTone;
+        playBuzzerTone(freq);
+      } else {
+        stopBuzzerOutput();
+      }
+    }
+    return;
+  }
+
   if (g_buzzerMode == BuzzerMode::StartupTone) {
     const size_t startupLen = sizeof(kBuzzerStartupPattern) / sizeof(kBuzzerStartupPattern[0]);
     if (g_buzzerStartupStep >= startupLen) {
-      g_buzzerMode = BuzzerMode::Off;
-      g_buzzerOutputOn = false;
-      stopBuzzerOutput();
+      stopBuzzerMode();
       return;
     }
 
@@ -488,9 +630,7 @@ void updateBuzzer() {
     g_buzzerPhaseStartedAtMs = now;
 
     if (g_buzzerStartupStep >= startupLen) {
-      g_buzzerMode = BuzzerMode::Off;
-      g_buzzerOutputOn = false;
-      stopBuzzerOutput();
+      stopBuzzerMode();
       return;
     }
 

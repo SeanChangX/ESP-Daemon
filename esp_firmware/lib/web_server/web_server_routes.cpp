@@ -677,12 +677,25 @@ void handleEStopSettingsRestoreDefaultsPost() {
 
   refreshNetworkIdentity();
   refreshESPNowChannel();
+  bool runtimeLedEnabled = false;
+#if ENABLE_SENSOR_TASK
+  bool runtimeSensorEnabled = false;
+#endif
   {
     AppSettingsReadGuard settingsGuard;
-    if (settingsGuard.settings().runtime_led_enabled) {
-      initLED();
-    }
+    runtimeLedEnabled = settingsGuard.settings().runtime_led_enabled;
+#if ENABLE_SENSOR_TASK
+    runtimeSensorEnabled = settingsGuard.settings().runtime_sensor_enabled;
+#endif
   }
+  if (runtimeLedEnabled) {
+    initLED();
+  }
+#if ENABLE_SENSOR_TASK
+  if (runtimeSensorEnabled) {
+    initVoltmeter();
+  }
+#endif
 
   server.send(200, "application/json", buildSettingsResponse(true, "E-STOP settings restored to defaults"));
 }
@@ -707,12 +720,25 @@ void handleEStopSettingsFactoryResetPost() {
 
   refreshNetworkIdentity();
   refreshESPNowChannel();
+  bool runtimeLedEnabled = false;
+#if ENABLE_SENSOR_TASK
+  bool runtimeSensorEnabled = false;
+#endif
   {
     AppSettingsReadGuard settingsGuard;
-    if (settingsGuard.settings().runtime_led_enabled) {
-      initLED();
-    }
+    runtimeLedEnabled = settingsGuard.settings().runtime_led_enabled;
+#if ENABLE_SENSOR_TASK
+    runtimeSensorEnabled = settingsGuard.settings().runtime_sensor_enabled;
+#endif
   }
+  if (runtimeLedEnabled) {
+    initLED();
+  }
+#if ENABLE_SENSOR_TASK
+  if (runtimeSensorEnabled) {
+    initVoltmeter();
+  }
+#endif
 
   server.send(200, "application/json", buildSettingsResponse(true, "Factory reset complete (full NVS erased), rebooting..."));
   delay(50);
@@ -961,12 +987,25 @@ void handleSettingsRestoreDefaultsPost() {
 
   refreshNetworkIdentity();
   refreshESPNowChannel();
+  bool runtimeLedEnabled = false;
+#if ENABLE_SENSOR_TASK
+  bool runtimeSensorEnabled = false;
+#endif
   {
     AppSettingsReadGuard settingsGuard;
-    if (settingsGuard.settings().runtime_led_enabled) {
-      initLED();
-    }
+    runtimeLedEnabled = settingsGuard.settings().runtime_led_enabled;
+#if ENABLE_SENSOR_TASK
+    runtimeSensorEnabled = settingsGuard.settings().runtime_sensor_enabled;
+#endif
   }
+  if (runtimeLedEnabled) {
+    initLED();
+  }
+#if ENABLE_SENSOR_TASK
+  if (runtimeSensorEnabled) {
+    initVoltmeter();
+  }
+#endif
 
   server.send(200, "application/json", buildSettingsResponse(true, "Settings restored to defaults"));
 }
@@ -991,12 +1030,25 @@ void handleSettingsFactoryResetPost() {
 
   refreshNetworkIdentity();
   refreshESPNowChannel();
+  bool runtimeLedEnabled = false;
+#if ENABLE_SENSOR_TASK
+  bool runtimeSensorEnabled = false;
+#endif
   {
     AppSettingsReadGuard settingsGuard;
-    if (settingsGuard.settings().runtime_led_enabled) {
-      initLED();
-    }
+    runtimeLedEnabled = settingsGuard.settings().runtime_led_enabled;
+#if ENABLE_SENSOR_TASK
+    runtimeSensorEnabled = settingsGuard.settings().runtime_sensor_enabled;
+#endif
   }
+  if (runtimeLedEnabled) {
+    initLED();
+  }
+#if ENABLE_SENSOR_TASK
+  if (runtimeSensorEnabled) {
+    initVoltmeter();
+  }
+#endif
 
   server.send(200, "application/json", buildSettingsResponse(true, "Factory reset complete (full NVS erased), rebooting..."));
   delay(50);

@@ -16,6 +16,7 @@
 #include <ArduinoJson.h>
 #include <WebServer.h>
 #include <ElegantOTA.h>
+#include <cmath>
 
 WebServer server(80);
 
@@ -53,6 +54,49 @@ static String getDeviceNameForMdns() {
   return settingsGuard.settings().device_name;
 }
 
+static const char* batteryStatusText(BatteryPackStatus status) {
+  switch (status) {
+    case BATTERY_STATUS_DISCONNECTED:
+      return "DISCONNECTED";
+    case BATTERY_STATUS_LOW:
+      return "LOW";
+    case BATTERY_STATUS_NORMAL:
+    default:
+      return "NORMAL";
+  }
+}
+
+static int estimateEStopBatteryPercent(float voltage, BatteryPackStatus status, const AppSettings& settings) {
+  if (status == BATTERY_STATUS_DISCONNECTED) {
+    return -1;
+  }
+
+  const float disconnectV = settings.battery_disconnect_threshold;
+  const float lowV = settings.battery_low_threshold;
+  const float fullV = std::fmax(4.2f, lowV + 0.6f);
+
+  float pct = 0.0f;
+  if (fullV <= disconnectV) {
+    pct = 0.0f;
+  } else if (voltage <= disconnectV) {
+    pct = 0.0f;
+  } else if (voltage >= fullV) {
+    pct = 100.0f;
+  } else if (lowV > disconnectV && voltage < lowV) {
+    pct = 15.0f * (voltage - disconnectV) / (lowV - disconnectV);
+  } else if (fullV > lowV) {
+    pct = 15.0f + 85.0f * (voltage - lowV) / (fullV - lowV);
+  }
+
+  if (pct < 0.0f) {
+    pct = 0.0f;
+  } else if (pct > 100.0f) {
+    pct = 100.0f;
+  }
+
+  return static_cast<int>(std::lround(pct));
+}
+
 static void handleDeviceInfoGet() {
   JsonDocument doc;
   doc["version"] = ESP_DAEMON_FW_VERSION;
@@ -80,6 +124,8 @@ static void handleDeviceInfoGet() {
 static void handleEStopStatusGet() {
   AppSettingsReadGuard settingsGuard;
   const AppSettings& settings = settingsGuard.settings();
+  const float batteryVoltage = getBatteryVoltage();
+  const BatteryPackStatus batteryStatus = getBatteryPackStatus();
 
   JsonDocument doc;
   doc["pressed"]                 = isEStopSwitchPressed();
@@ -97,6 +143,13 @@ static void handleEStopStatusGet() {
   doc["routeCount"]              = settings.estop_routes.size();
   doc["pressedRouteCount"]       = getEStopPressedRouteCount();
   doc["configuredPeerCount"]     = getEStopConfiguredPeerCount();
+  doc["batteryStatus"]           = batteryStatusText(batteryStatus);
+  doc["batteryPercent"]          = estimateEStopBatteryPercent(batteryVoltage, batteryStatus, settings);
+  if (batteryStatus == BATTERY_STATUS_DISCONNECTED) {
+    doc["batteryVoltage"] = nullptr;
+  } else {
+    doc["batteryVoltage"] = batteryVoltage;
+  }
 
   JsonArray routes = doc["routes"].to<JsonArray>();
   const size_t routeCount = settings.estop_routes.size();

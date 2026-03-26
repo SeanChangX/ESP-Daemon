@@ -12,6 +12,10 @@
     <div class="topnav">
       <h1>ESP-Daemon E-STOP</h1>
       <div class="topnav-meta" aria-label="Device">
+        <div class="topnav-meta__chip topnav-meta__chip--battery" aria-label="Battery capacity">
+          <span class="topnav-meta__label">BAT:</span>
+          <span id="topBatteryCapacity" class="topnav-meta__value topnav-meta__value--muted">--</span>
+        </div>
         <div class="topnav-meta__chip">
           <span class="topnav-meta__label">MAC:</span>
           <span id="deviceMac" class="topnav-meta__value">00-00-00-00-00-00</span>
@@ -42,20 +46,24 @@
                 <span class="status-pill" id="espNowChannelRuntime">-</span>
               </div>
               <div class="status-item status-item--split">
-                <span class="status-item__label">Peers</span>
-                <span class="status-pill" id="peerStatus">not configured</span>
-              </div>
-              <div class="status-item status-item--split">
                 <span class="status-item__label">Routes</span>
                 <span class="status-pill" id="routeStatus">0/0 active</span>
+              </div>
+              <div class="status-item status-item--split">
+                <span class="status-item__label">Packets Sent</span>
+                <span class="status-pill" id="packetCount">0</span>
               </div>
               <div class="status-item status-item--split">
                 <span class="status-item__label">WLED</span>
                 <span class="status-pill" id="wledStatus">disabled</span>
               </div>
               <div class="status-item status-item--split">
-                <span class="status-item__label">Packets Sent</span>
-                <span class="status-pill" id="packetCount">0</span>
+                <span class="status-item__label">Battery Voltage</span>
+                <span class="status-pill" id="batteryVoltage">--</span>
+              </div>
+              <div class="status-item status-item--split">
+                <span class="status-item__label">Battery Status</span>
+                <span class="status-pill" id="batteryState">unknown</span>
               </div>
             </div>
           </div>

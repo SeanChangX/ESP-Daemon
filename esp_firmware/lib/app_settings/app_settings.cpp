@@ -163,6 +163,21 @@ void updateCalibrationFromDivider() {
     (g_settings.voltage_divider_r1 + g_settings.voltage_divider_r2) / g_settings.voltage_divider_r2;
 }
 
+void applyEStopBatteryDefaults() {
+  // Seeed XIAO ESP32C3 battery monitor reference:
+  // A0 + 1/2 divider (200k / 200k), then recover pack voltage by calibration ratio 2.0.
+  g_settings.voltmeter_pin                = 2;         // A0 on XIAO ESP32C3
+  g_settings.voltage_divider_r1           = 200000.0f;
+  g_settings.voltage_divider_r2           = 200000.0f;
+  g_settings.voltmeter_calibration        = 2.0f;
+  g_settings.voltmeter_offset             = 0.0f;
+  g_settings.sliding_window_size          = 16;
+  g_settings.timer_period_us              = 1000000;
+  g_settings.battery_disconnect_threshold = 2.7f;
+  g_settings.battery_low_threshold        = 3.45f;
+  updateCalibrationFromDivider();
+}
+
 void applyDefaults() {
   g_settings.device_name                  = defaultDeviceNameFromMac();
 
@@ -173,7 +188,7 @@ void applyDefaults() {
   g_settings.runtime_espnow_enabled       = true;
   g_settings.runtime_microros_enabled     = false;
   g_settings.runtime_led_enabled          = false;
-  g_settings.runtime_sensor_enabled       = false;
+  g_settings.runtime_sensor_enabled       = true;
 #else
   g_settings.runtime_espnow_enabled       = true;
   g_settings.runtime_microros_enabled     = true;
@@ -202,6 +217,9 @@ void applyDefaults() {
   g_settings.led_brightness               = 200;
   g_settings.led_override_duration_ms     = 1000;
 
+#if APP_MODE == APP_MODE_ESTOP
+  applyEStopBatteryDefaults();
+#else
   g_settings.voltmeter_pin                = 2;
   g_settings.voltage_divider_r1           = 47000.0f;
   g_settings.voltage_divider_r2           = 4700.0f;
@@ -212,6 +230,7 @@ void applyDefaults() {
   g_settings.battery_disconnect_threshold = 3.0f;
   g_settings.battery_low_threshold        = 17.5f;
   updateCalibrationFromDivider();
+#endif
 
   g_settings.ros_node_name                = "esp_daemon";
   g_settings.ros_domain_id                = 0;
@@ -407,6 +426,10 @@ void loadFromJson(const JsonObjectConst& json) {
   loadFloat(json,  "batteryDisconnectThreshold",    g_settings.battery_disconnect_threshold);
   loadFloat(json,  "batteryLowThreshold",           g_settings.battery_low_threshold);
   updateCalibrationFromDivider();
+#if APP_MODE == APP_MODE_ESTOP
+  // Keep E-STOP battery sensing always active (UI does not expose this runtime toggle).
+  g_settings.runtime_sensor_enabled = true;
+#endif
 
   loadString(json, "rosNodeName", g_settings.ros_node_name);
   if (g_settings.ros_node_name.length() == 0) {

@@ -225,6 +225,33 @@ textarea:focus-visible {
   text-overflow: ellipsis;
 }
 
+.topnav-meta__chip--battery {
+  align-items: center;
+  gap: 0.34rem;
+  padding-left: 0.56rem;
+  padding-right: 0.56rem;
+}
+
+.topnav-meta__value--ok {
+  color: #30d158;
+}
+
+.topnav-meta__value--warn {
+  color: #ff9f0a;
+}
+
+.topnav-meta__value--muted {
+  color: var(--topnav-meta-label);
+}
+
+.light-mode .topnav-meta__value--ok {
+  color: #248a3d;
+}
+
+.light-mode .topnav-meta__value--warn {
+  color: #c76800;
+}
+
 /* Prevent iOS data detectors from forcing blue link styles on MAC-like placeholders. */
 .topnav-meta__value a,
 a[x-apple-data-detectors],
@@ -2004,6 +2031,11 @@ button.modern-floating-btn {
     padding: 0.4rem 0.5rem 0.4rem 0.62rem;
   }
 
+  .topnav-meta__chip--battery {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+
   .topnav-meta__label,
   .topnav-meta__value {
     font-size: 0.7rem;
@@ -2096,6 +2128,11 @@ button.modern-floating-btn {
 
   .topnav-meta__chip {
     padding: 0.38rem 0.42rem 0.38rem 0.52rem;
+  }
+
+  .topnav-meta__chip--battery {
+    padding-left: 0.44rem;
+    padding-right: 0.44rem;
   }
 
   .topnav h1 {

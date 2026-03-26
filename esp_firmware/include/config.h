@@ -66,7 +66,7 @@
 #endif
 #ifndef ENABLE_SENSOR_TASK
 #if APP_MODE == APP_MODE_ESTOP
-#define ENABLE_SENSOR_TASK           0
+#define ENABLE_SENSOR_TASK           1
 #else
 #define ENABLE_SENSOR_TASK           1
 #endif

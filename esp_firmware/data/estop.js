@@ -245,6 +245,55 @@ function mapWledStatusText(statusRaw) {
   }
 }
 
+function mapBatteryStatusText(statusRaw) {
+  const status = String(statusRaw || '').trim().toUpperCase();
+  switch (status) {
+    case 'NORMAL':
+      return 'normal';
+    case 'LOW':
+      return 'low';
+    case 'DISCONNECTED':
+      return 'disconnected';
+    default:
+      return status ? status.toLowerCase() : 'unknown';
+  }
+}
+
+function formatBatteryVoltage(voltageRaw, disconnected) {
+  if (disconnected) {
+    return '--';
+  }
+  const voltage = Number(voltageRaw);
+  if (!Number.isFinite(voltage) || voltage <= 0) {
+    return '--';
+  }
+  return voltage.toFixed(3) + ' V';
+}
+
+function updateTopBatteryCapacity(percentRaw, disconnected, low, forceOffline) {
+  const valueEl = document.getElementById('topBatteryCapacity');
+  if (!valueEl) {
+    return;
+  }
+
+  let percent = NaN;
+  if (Number.isFinite(percentRaw)) {
+    percent = Math.max(0, Math.min(100, Math.round(percentRaw)));
+  }
+
+  const hasPercent = !forceOffline && !disconnected && Number.isFinite(percent);
+  const displayText = hasPercent ? String(percent) + '%' : '--';
+  valueEl.textContent = displayText;
+  valueEl.classList.remove('topnav-meta__value--ok', 'topnav-meta__value--warn', 'topnav-meta__value--muted');
+  if (!hasPercent) {
+    valueEl.classList.add('topnav-meta__value--muted');
+  } else if (low) {
+    valueEl.classList.add('topnav-meta__value--warn');
+  } else {
+    valueEl.classList.add('topnav-meta__value--ok');
+  }
+}
+
 function parseJsonSafe(res) {
   return res.text().then(function(t) {
     if (!t) {
@@ -598,15 +647,19 @@ function refreshEStopStatus() {
       const switchState = document.getElementById('switchState');
       const rawEl = document.getElementById('switchRaw');
       const channelEl = document.getElementById('espNowChannelRuntime');
-      const peerStatusEl = document.getElementById('peerStatus');
       const routeStatusEl = document.getElementById('routeStatus');
       const packetEl = document.getElementById('packetCount');
       const wledEl = document.getElementById('wledStatus');
+      const batteryVoltageEl = document.getElementById('batteryVoltage');
+      const batteryStateEl = document.getElementById('batteryState');
 
       const pressed = !!data.pressed;
       const routeCount = Number(data.routeCount || 0);
       const pressedRouteCount = Number(data.pressedRouteCount || 0);
-      const configuredPeerCount = Number(data.configuredPeerCount || 0);
+      const batteryStatusRaw = String(data.batteryStatus || '').toUpperCase();
+      const batteryDisconnected = batteryStatusRaw === 'DISCONNECTED';
+      const batteryLow = batteryStatusRaw === 'LOW';
+      const batteryPercentRaw = Number(data.batteryPercent);
 
       setPillState(switchState, pressed ? 'PRESSED (STOP)' : 'RELEASED', !pressed);
 
@@ -629,27 +682,26 @@ function refreshEStopStatus() {
         setPillState(routeStatusEl, String(pressedRouteCount) + '/' + String(routeCount) + ' active', routeOk);
       }
 
-      if (routeCount === 0) {
-        setPillState(peerStatusEl, 'not configured', false);
-      } else if (configuredPeerCount === routeCount) {
-        setPillState(peerStatusEl, String(configuredPeerCount) + '/' + String(routeCount) + ' online', true);
-      } else if (configuredPeerCount > 0) {
-        setPillState(peerStatusEl, String(configuredPeerCount) + '/' + String(routeCount) + ' online', false);
-      } else {
-        setPillState(peerStatusEl, 'waiting', false);
-      }
-
       const wledText = mapWledStatusText(data.wledStatus);
       const wledOk = wledText === 'ready' || wledText === 'pressed preset active' || wledText === 'released preset active' || wledText === 'restored';
       setPillState(wledEl, wledText, wledOk);
+
+      const batteryVoltageText = formatBatteryVoltage(data.batteryVoltage, batteryDisconnected);
+      const batteryStatusText = mapBatteryStatusText(batteryStatusRaw);
+      const batteryOk = !batteryDisconnected && !batteryLow;
+      setPillState(batteryVoltageEl, batteryVoltageText, batteryOk);
+      setPillState(batteryStateEl, batteryStatusText, batteryOk);
+      updateTopBatteryCapacity(batteryPercentRaw, batteryDisconnected, batteryLow, false);
 
       applyRouteRuntimeStatus(data.routes);
     })
     .catch(function() {
       setPillState(document.getElementById('switchState'), 'offline', false);
-      setPillState(document.getElementById('peerStatus'), 'offline', false);
       setPillState(document.getElementById('routeStatus'), 'offline', false);
       setPillState(document.getElementById('wledStatus'), 'offline', false);
+      setPillState(document.getElementById('batteryVoltage'), 'offline', false);
+      setPillState(document.getElementById('batteryState'), 'offline', false);
+      updateTopBatteryCapacity(NaN, true, false, true);
     });
 }
 

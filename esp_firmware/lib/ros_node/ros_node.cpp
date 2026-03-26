@@ -2,6 +2,7 @@
 #include "app_settings.h"
 
 #include "led_control.h"
+#include "voltmeter.h"
 
 #include <Arduino.h>
 #if ENABLE_MICROROS
@@ -10,26 +11,25 @@
 
 #if ENABLE_MICROROS
 // micro-ROS essential components
-rcl_publisher_t                  counter_publisher;
-rcl_publisher_t          battery_voltage_publisher;
+rcl_publisher_t                        counter_publisher;
+rcl_publisher_t                battery_voltage_publisher;
 rcl_subscription_t       control_group1_enable_subscriber;
 rcl_subscription_t       control_group2_enable_subscriber;
 rcl_subscription_t       control_group3_enable_subscriber;
-std_msgs__msg__Int32             counter_msg;
-std_msgs__msg__Float32   battery_voltage_msg;
+std_msgs__msg__Int32                   counter_msg;
+std_msgs__msg__Float32         battery_voltage_msg;
 std_msgs__msg__Bool      control_group1_enable_msg;
 std_msgs__msg__Bool      control_group2_enable_msg;
 std_msgs__msg__Bool      control_group3_enable_msg;
 
-rclc_executor_t executor;
-rcl_allocator_t allocator;
-rclc_support_t support;
-rcl_init_options_t init_options;
-rcl_node_t node;
-rcl_timer_t timer;
+rclc_executor_t          executor;
+rcl_allocator_t          allocator;
+rclc_support_t           support;
+rcl_init_options_t       init_options;
+rcl_node_t               node;
+rcl_timer_t              timer;
 #endif
 
-extern float Vbattf;
 #if ENABLE_MICROROS
 AgentState state = WAITING_AGENT;
 #else
@@ -57,12 +57,14 @@ void error_loop() { while (1) { delay(100); } }
 #endif
 
 static bool isSwitchEnabled(uint8_t pin) {
-  const bool activeHigh = getAppSettings().switch_active_high;
+  AppSettingsReadGuard settingsGuard;
+  const bool activeHigh = settingsGuard.settings().switch_active_high;
   return digitalRead(pin) == (activeHigh ? HIGH : LOW);
 }
 
 static uint8_t getSwitchPinForChannel(PowerControlChannel channel) {
-  const AppSettings& settings = getAppSettings();
+  AppSettingsReadGuard settingsGuard;
+  const AppSettings& settings = settingsGuard.settings();
   switch (channel) {
     case POWER_CHANNEL_GROUP1:
       return settings.control_group1_switch_pin;
@@ -75,26 +77,27 @@ static uint8_t getSwitchPinForChannel(PowerControlChannel channel) {
   }
 }
 
-static void setOutputPower(uint8_t pin, bool enabled) {
-  const bool powerActiveHigh = getAppSettings().power_active_high;
+static void setOutputPower(uint8_t pin, bool enabled, bool powerActiveHigh) {
   digitalWrite(pin, enabled ? (powerActiveHigh ? HIGH : LOW) : (powerActiveHigh ? LOW : HIGH));
 }
 
 static void applyPowerOutputs(bool group1_enabled, bool group2_enabled, bool group3_enabled) {
-  const AppSettings& settings = getAppSettings();
-  setOutputPower(settings.control_group1_power_pin,           group1_enabled);
-  setOutputPower(settings.control_group2_power_12v_pin,       group2_enabled);
-  setOutputPower(settings.control_group2_power_7v4_pin,       group2_enabled);
-  setOutputPower(settings.control_group3_power_pin,           group3_enabled);
+  AppSettingsReadGuard settingsGuard;
+  const AppSettings& settings = settingsGuard.settings();
+  setOutputPower(settings.control_group1_power_pin,           group1_enabled, settings.power_active_high);
+  setOutputPower(settings.control_group2_power_12v_pin,       group2_enabled, settings.power_active_high);
+  setOutputPower(settings.control_group2_power_7v4_pin,       group2_enabled, settings.power_active_high);
+  setOutputPower(settings.control_group3_power_pin,           group3_enabled, settings.power_active_high);
 }
 
 static void refreshPowerControlState() {
   static bool has_prev_switch_sample = false;
-  static bool prev_group1_switch = false;
-  static bool prev_group2_switch = false;
-  static bool prev_group3_switch = false;
+  static bool prev_group1_switch     = false;
+  static bool prev_group2_switch     = false;
+  static bool prev_group3_switch     = false;
 
-  const AppSettings& settings = getAppSettings();
+  AppSettingsReadGuard settingsGuard;
+  const AppSettings& settings = settingsGuard.settings();
   const bool new_group1_switch = isSwitchEnabled(settings.control_group1_switch_pin);
   const bool new_group2_switch = isSwitchEnabled(settings.control_group2_switch_pin);
   const bool new_group3_switch = isSwitchEnabled(settings.control_group3_switch_pin);
@@ -191,7 +194,7 @@ void timer_callback(rcl_timer_t* timer, int64_t last_call_time) {
     RCSOFTCHECK(rcl_publish(&counter_publisher, &counter_msg, NULL));
     RCSOFTCHECK(rcl_publish(&battery_voltage_publisher, &battery_voltage_msg, NULL));
     counter_msg.data++;
-    battery_voltage_msg.data = Vbattf;
+    battery_voltage_msg.data = getBatteryVoltage();
   }
 }
 
@@ -299,7 +302,8 @@ void destroy_entities() {
 }
 
 bool create_entities() {
-  const AppSettings& settings = getAppSettings();
+  AppSettingsReadGuard settingsGuard;
+  const AppSettings& settings = settingsGuard.settings();
   allocator = rcl_get_default_allocator();
   init_options = rcl_get_zero_initialized_init_options();
   rcl_init_options_init(&init_options, allocator);
@@ -358,7 +362,8 @@ void initROS() {
   set_microros_serial_transports(Serial);
 #endif
 
-  const AppSettings& settings = getAppSettings();
+  AppSettingsReadGuard settingsGuard;
+  const AppSettings& settings = settingsGuard.settings();
   const uint8_t inputMode = settings.switch_active_high ? INPUT : INPUT_PULLUP;
 
   pinMode(settings.control_group1_switch_pin, inputMode);
@@ -370,10 +375,10 @@ void initROS() {
   pinMode(settings.control_group2_power_7v4_pin, OUTPUT);
   pinMode(settings.control_group3_power_pin,     OUTPUT);
 
-  setOutputPower(settings.control_group1_power_pin,     false);
-  setOutputPower(settings.control_group2_power_12v_pin, false);
-  setOutputPower(settings.control_group2_power_7v4_pin, false);
-  setOutputPower(settings.control_group3_power_pin,     false);
+  setOutputPower(settings.control_group1_power_pin,     false, settings.power_active_high);
+  setOutputPower(settings.control_group2_power_12v_pin, false, settings.power_active_high);
+  setOutputPower(settings.control_group2_power_7v4_pin, false, settings.power_active_high);
+  setOutputPower(settings.control_group3_power_pin,     false, settings.power_active_high);
   
 #if ENABLE_MICROROS
   counter_msg.data = 0;
@@ -381,7 +386,7 @@ void initROS() {
   control_group1_enable_msg.data = false;
   control_group2_enable_msg.data = false;
   control_group3_enable_msg.data = false;
-  state = getAppSettings().runtime_microros_enabled ? WAITING_AGENT : AGENT_DISCONNECTED;
+  state = settings.runtime_microros_enabled ? WAITING_AGENT : AGENT_DISCONNECTED;
 #else
   state = AGENT_DISCONNECTED;
 #endif

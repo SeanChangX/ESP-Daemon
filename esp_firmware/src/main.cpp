@@ -35,10 +35,10 @@
 #include <rmw_microros/rmw_microros.h>
 #endif
 
-static TaskHandle_t ledTaskHandle = NULL;
-static TaskHandle_t sensorTaskHandle = NULL;
+static TaskHandle_t ledTaskHandle      = NULL;
+static TaskHandle_t sensorTaskHandle   = NULL;
 static TaskHandle_t microRosTaskHandle = NULL;
-static TaskHandle_t serviceTaskHandle = NULL;
+static TaskHandle_t serviceTaskHandle  = NULL;
 
 static void createPinnedTask(
   TaskFunction_t fn,
@@ -56,18 +56,31 @@ static void createPinnedTask(
 void microROSTask(void* pvParameters) {
   (void)pvParameters;
 #if ENABLE_MICROROS
-  if (!getAppSettings().runtime_microros_enabled) {
-    vTaskDelete(NULL);
+  {
+    AppSettingsReadGuard settingsGuard;
+    if (!settingsGuard.settings().runtime_microros_enabled) {
+      vTaskDelete(NULL);
+    }
   }
 
   uint8_t consecutive_ping_failures = 0;
 
   while (true) {
-    const AppSettings& settings = getAppSettings();
+    uint32_t ping_interval_ms = 0;
+    uint32_t mros_timeout_ms  = 0;
+    uint32_t ros_timer_ms     = 0;
+    {
+      AppSettingsReadGuard settingsGuard;
+      const AppSettings& settings = settingsGuard.settings();
+      ping_interval_ms            = settings.mros_ping_interval_ms;
+      mros_timeout_ms             = settings.mros_timeout_ms;
+      ros_timer_ms                = settings.ros_timer_ms;
+    }
+
     switch (state) {
       case WAITING_AGENT:
-        EXECUTE_EVERY_N_MS(settings.mros_ping_interval_ms, {
-          state = (RMW_RET_OK == rmw_uros_ping_agent(settings.mros_timeout_ms, 1)) ? AGENT_AVAILABLE : WAITING_AGENT;
+        EXECUTE_EVERY_N_MS(ping_interval_ms, {
+          state = (RMW_RET_OK == rmw_uros_ping_agent(mros_timeout_ms, 1)) ? AGENT_AVAILABLE : WAITING_AGENT;
           if (state == AGENT_AVAILABLE) {
             consecutive_ping_failures = 0;
           }
@@ -83,8 +96,8 @@ void microROSTask(void* pvParameters) {
         }
         break;
       case AGENT_CONNECTED:
-        EXECUTE_EVERY_N_MS(settings.mros_ping_interval_ms, {
-          if (RMW_RET_OK == rmw_uros_ping_agent(settings.mros_timeout_ms, 1)) {
+        EXECUTE_EVERY_N_MS(ping_interval_ms, {
+          if (RMW_RET_OK == rmw_uros_ping_agent(mros_timeout_ms, 1)) {
             consecutive_ping_failures = 0;
             state = AGENT_CONNECTED;
           } else {
@@ -98,8 +111,8 @@ void microROSTask(void* pvParameters) {
         });
         if (state == AGENT_CONNECTED) {
           const uint32_t spin_slice_ms =
-            (settings.ros_timer_ms < MROS_EXECUTOR_SPIN_SLICE_MS)
-              ? settings.ros_timer_ms
+            (ros_timer_ms < MROS_EXECUTOR_SPIN_SLICE_MS)
+              ? ros_timer_ms
               : static_cast<uint32_t>(MROS_EXECUTOR_SPIN_SLICE_MS);
           rclc_executor_spin_some(&executor, RCL_MS_TO_NS(spin_slice_ms));
         }
@@ -163,22 +176,31 @@ void setup() {
 #endif
 
 #if ENABLE_LED_TASK
-  if (getAppSettings().runtime_led_enabled) {
-    initLED();
-    createPinnedTask(LEDTask, "LED Task", TASK_STACK_LED_BYTES, TASK_PRIO_LED, &ledTaskHandle);
+  {
+    AppSettingsReadGuard settingsGuard;
+    if (settingsGuard.settings().runtime_led_enabled) {
+      initLED();
+      createPinnedTask(LEDTask, "LED Task", TASK_STACK_LED_BYTES, TASK_PRIO_LED, &ledTaskHandle);
+    }
   }
 #endif
 
 #if ENABLE_SENSOR_TASK
-  if (getAppSettings().runtime_sensor_enabled) {
-    initVoltmeter();
-    createPinnedTask(voltmeterTask, "Sensor Task", TASK_STACK_SENSOR_BYTES, TASK_PRIO_SENSOR, &sensorTaskHandle);
+  {
+    AppSettingsReadGuard settingsGuard;
+    if (settingsGuard.settings().runtime_sensor_enabled) {
+      initVoltmeter();
+      createPinnedTask(voltmeterTask, "Sensor Task", TASK_STACK_SENSOR_BYTES, TASK_PRIO_SENSOR, &sensorTaskHandle);
+    }
   }
 #endif
 
 #if APP_MODE == APP_MODE_DAEMON && ENABLE_MICROROS
-  if (getAppSettings().runtime_microros_enabled) {
-    createPinnedTask(microROSTask, "microROS", TASK_STACK_MICROROS_BYTES, TASK_PRIO_MICROROS, &microRosTaskHandle);
+  {
+    AppSettingsReadGuard settingsGuard;
+    if (settingsGuard.settings().runtime_microros_enabled) {
+      createPinnedTask(microROSTask, "microROS", TASK_STACK_MICROROS_BYTES, TASK_PRIO_MICROROS, &microRosTaskHandle);
+    }
   }
 #endif
 
@@ -187,8 +209,11 @@ void setup() {
 #endif
 
 #if ENABLE_ESPNOW
-  if (getAppSettings().runtime_espnow_enabled) {
-    initESPNow();
+  {
+    AppSettingsReadGuard settingsGuard;
+    if (settingsGuard.settings().runtime_espnow_enabled) {
+      initESPNow();
+    }
   }
 #endif
 

@@ -5,38 +5,38 @@
 namespace {
 
 // Typical rest/open-circuit style window for rough SoC mapping (not coulomb-accurate).
-constexpr float kMakita18FullV = 21.0f;
-constexpr float kMakita18EmptyV = 15.5f;
+constexpr float     kMakita18FullV            = 21.0f;
+constexpr float     kMakita18EmptyV           = 15.5f;
 
 // EMA on pack voltage (updated each sensor tick, ~10 Hz). Lower alpha = steadier display.
-constexpr float kVoltageEmaAlpha = 0.08f;
+constexpr float     kVoltageEmaAlpha          = 0.08f;
 
 // Display smoothing for battery percentage (phone-like feel, avoid big jumps).
-constexpr float kPercentEmaAlpha = 0.14f;
+constexpr float     kPercentEmaAlpha          = 0.14f;
 
 // Remaining-time model based on a long discharge window (stable, low jitter).
-constexpr uint32_t kTimeWindowMinSec = 120u;     // Need at least 2 minutes data.
-constexpr uint32_t kTimeWindowMaxSec = 900u;     // Re-anchor every 15 minutes.
-constexpr float kTimeWindowMinDropV = 0.04f;     // Need enough voltage drop before extrapolation.
-constexpr float kTimeWindowResetDropV = 0.35f;   // Re-anchor sooner on bigger drop.
-constexpr float kMinDischargeRateVps = 0.00002f; // 0.072 V/hour floor.
-constexpr float kTimeEstimateEmaAlpha = 0.18f;
-constexpr uint32_t kTimeEstimateStaleMs = 120u * 60u * 1000u;
-constexpr int kMaxRemainingMinutes = 48 * 60;
+constexpr uint32_t  kTimeWindowMinSec         = 120u;     // Need at least 2 minutes data.
+constexpr uint32_t  kTimeWindowMaxSec         = 900u;     // Re-anchor every 15 minutes.
+constexpr float     kTimeWindowMinDropV       = 0.04f;    // Need enough voltage drop before extrapolation.
+constexpr float     kTimeWindowResetDropV     = 0.35f;    // Re-anchor sooner on bigger drop.
+constexpr float     kMinDischargeRateVps      = 0.00002f; // 0.072 V/hour floor.
+constexpr float     kTimeEstimateEmaAlpha     = 0.18f;
+constexpr uint32_t  kTimeEstimateStaleMs      = 120u * 60u * 1000u;
+constexpr int       kMaxRemainingMinutes      = 48 * 60;
 
-float s_v_ema = 0.f;
-bool s_ema_ready = false;
-bool s_pack_connected = false;
+float     s_v_ema                             = 0.f;
+bool      s_ema_ready                         = false;
+bool      s_pack_connected                    = false;
 
-float s_pct_ema = 0.f;
-bool s_pct_ready = false;
+float     s_pct_ema                           = 0.f;
+bool      s_pct_ready                         = false;
 
-float s_window_anchor_v = 0.f;
-uint32_t s_window_anchor_ms = 0;
-float s_time_remaining_min_ema = 0.f;
-bool s_time_ready = false;
-uint32_t s_time_last_fresh_ms = 0;
-uint32_t s_time_last_decay_ms = 0;
+float     s_window_anchor_v                   = 0.f;
+uint32_t  s_window_anchor_ms                  = 0;
+float     s_time_remaining_min_ema            = 0.f;
+bool      s_time_ready                        = false;
+uint32_t  s_time_last_fresh_ms                = 0;
+uint32_t  s_time_last_decay_ms                = 0;
 
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -76,23 +76,23 @@ void updatePercentLocked() {
 
 void updateTimeEstimateLocked(const uint32_t now_ms) {
   if (!s_pack_connected || !s_ema_ready) {
-    s_time_ready = false;
-    s_window_anchor_ms = 0;
+    s_time_ready         = false;
+    s_window_anchor_ms   = 0;
     s_time_last_fresh_ms = 0;
     s_time_last_decay_ms = 0;
     return;
   }
 
   if (s_window_anchor_ms == 0u) {
-    s_window_anchor_ms = now_ms;
-    s_window_anchor_v = s_v_ema;
+    s_window_anchor_ms   = now_ms;
+    s_window_anchor_v    = s_v_ema;
     return;
   }
 
   // Keep the anchor near the recent top if voltage rebounds.
   if (s_v_ema > s_window_anchor_v + 0.03f) {
-    s_window_anchor_v = s_v_ema;
-    s_window_anchor_ms = now_ms;
+    s_window_anchor_v    = s_v_ema;
+    s_window_anchor_ms   = now_ms;
   }
 
   const uint32_t elapsed_ms = now_ms - s_window_anchor_ms;
@@ -136,14 +136,14 @@ void updateTimeEstimateLocked(const uint32_t now_ms) {
     }
 
     if (s_time_last_fresh_ms != 0u && (now_ms - s_time_last_fresh_ms) > kTimeEstimateStaleMs) {
-      s_time_ready = false;
+      s_time_ready         = false;
       s_time_last_fresh_ms = 0;
     }
   }
 
   if (elapsed_sec >= static_cast<float>(kTimeWindowMaxSec) || drop_v >= kTimeWindowResetDropV) {
     s_window_anchor_ms = now_ms;
-    s_window_anchor_v = s_v_ema;
+    s_window_anchor_v  = s_v_ema;
   }
 }
 
@@ -164,17 +164,17 @@ void appendJsonLocked(JsonDocument& readings) {
 
 void batteryEstimateInit() {
   portENTER_CRITICAL(&s_mux);
-  s_v_ema = 0.f;
-  s_ema_ready = false;
-  s_pack_connected = false;
-  s_pct_ema = 0.f;
-  s_pct_ready = false;
-  s_window_anchor_v = 0.f;
-  s_window_anchor_ms = 0;
-  s_time_remaining_min_ema = 0.f;
-  s_time_ready = false;
-  s_time_last_fresh_ms = 0;
-  s_time_last_decay_ms = 0;
+  s_v_ema                   = 0.f;
+  s_ema_ready               = false;
+  s_pack_connected          = false;
+  s_pct_ema                 = 0.f;
+  s_pct_ready               = false;
+  s_window_anchor_v         = 0.f;
+  s_window_anchor_ms        = 0;
+  s_time_remaining_min_ema  = 0.f;
+  s_time_ready              = false;
+  s_time_last_fresh_ms      = 0;
+  s_time_last_decay_ms      = 0;
   portEXIT_CRITICAL(&s_mux);
 }
 
@@ -185,11 +185,11 @@ void batteryEstimateUpdate(const float pack_volts, const bool pack_connected) {
   if (!pack_connected) {
     // Keep last filtered voltage so UI can still show % after disconnect.
     // Remaining-time extrapolation is cleared because no active discharge session.
-    s_pack_connected = false;
-    s_time_ready = false;
-    s_window_anchor_ms = 0;
-    s_time_last_fresh_ms = 0;
-    s_time_last_decay_ms = 0;
+    s_pack_connected        = false;
+    s_time_ready            = false;
+    s_window_anchor_ms      = 0;
+    s_time_last_fresh_ms    = 0;
+    s_time_last_decay_ms    = 0;
     portEXIT_CRITICAL(&s_mux);
     return;
   }
@@ -197,10 +197,10 @@ void batteryEstimateUpdate(const float pack_volts, const bool pack_connected) {
   s_pack_connected = true;
 
   if (!s_ema_ready) {
-    s_v_ema = pack_volts;
-    s_ema_ready = true;
-    s_window_anchor_v = s_v_ema;
-    s_window_anchor_ms = now;
+    s_v_ema                 = pack_volts;
+    s_ema_ready             = true;
+    s_window_anchor_v       = s_v_ema;
+    s_window_anchor_ms      = now;
     updatePercentLocked();
     portEXIT_CRITICAL(&s_mux);
     return;

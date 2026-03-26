@@ -1,46 +1,43 @@
+ESP-Daemon firmware private libraries
+====================================
 
-This directory is intended for project specific (private) libraries.
-PlatformIO will compile them to static libraries and link into the executable file.
+This folder contains project modules compiled as static libraries by PlatformIO.
 
-The source code of each library should be placed in a separate directory
-("lib/your_library_name/[Code]").
+Design notes
+------------
+- `src/main.cpp` is intentionally thin and only wires startup flow.
+- Feature logic lives in `lib/<module>/` folders.
+- Runtime behavior is unchanged by this split; the goal is maintainability.
 
-For example, see the structure of the following example libraries `Foo` and `Bar`:
+Module map
+----------
+- `app_settings/`
+  - Settings schema, JSON serialization, validation, and NVS persistence.
+  - `app_settings.cpp`: defaults, JSON load/store helpers, read access.
+  - `app_settings_update.cpp`: update/validation flow.
+  - `app_settings_storage.cpp`: save/reset/factory-reset and boot load.
+- `web_server/`
+  - HTTP server and web UI endpoints.
+  - `web_server.cpp`: server bootstrap, static file serving, route registration.
+  - `web_server_routes.cpp`: API handlers and settings import/export logic.
+- `comm/`
+  - ESP-NOW communication, emergency route runtime behavior.
+- `wifi_config/`
+  - Wi-Fi provisioning and identity refresh.
+- `ros_node/`
+  - micro-ROS publishers/subscribers and power control integration.
+- `led_control/`
+  - onboard NeoPixel behavior and LED task control.
+- `sensors/`
+  - ADC voltmeter sampling and sensor utility APIs.
+- `battery_estimate/`
+  - battery status estimation and export helpers.
+- `telemetry_log/`
+  - runtime telemetry buffer and JSON export for web API.
 
-|--lib
-|  |
-|  |--Bar
-|  |  |--docs
-|  |  |--examples
-|  |  |--src
-|  |     |- Bar.c
-|  |     |- Bar.h
-|  |  |- library.json (optional. for custom build options, etc) https://docs.platformio.org/page/librarymanager/config.html
-|  |
-|  |--Foo
-|  |  |- Foo.c
-|  |  |- Foo.h
-|  |
-|  |- README --> THIS FILE
-|
-|- platformio.ini
-|--src
-   |- main.c
-
-Example contents of `src/main.c` using Foo and Bar:
-```
-#include <Foo.h>
-#include <Bar.h>
-
-int main (void)
-{
-  ...
-}
-
-```
-
-The PlatformIO Library Dependency Finder will find automatically dependent
-libraries by scanning project source files.
-
-More information about PlatformIO Library Dependency Finder
-- https://docs.platformio.org/page/librarymanager/ldf.html
+Guidelines
+----------
+- Keep cross-module dependencies directional (avoid circular includes).
+- Prefer `.h/.cpp` modules over textual include patterns.
+- Keep route registration in `web_server.cpp`; put handler implementation in
+  `web_server_routes.cpp`.

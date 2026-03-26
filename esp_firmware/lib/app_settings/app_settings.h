@@ -86,7 +86,23 @@ struct AppSettings {
   String control_panel_url;
 };
 
+class AppSettingsReadGuard {
+public:
+  AppSettingsReadGuard();
+  ~AppSettingsReadGuard();
+
+  AppSettingsReadGuard(const AppSettingsReadGuard&) = delete;
+  AppSettingsReadGuard& operator=(const AppSettingsReadGuard&) = delete;
+
+  const AppSettings& settings() const;
+
+private:
+  bool locked_;
+};
+
 void initAppSettings(bool storage_available = true);
+// Returns the live settings object. Prefer using AppSettingsReadGuard for
+// thread-safe access from application modules.
 const AppSettings& getAppSettings();
 
 void appSettingsToJson(JsonDocument& doc, bool include_pin_code = false);

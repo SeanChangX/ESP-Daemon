@@ -19,21 +19,21 @@ portMUX_TYPE g_mux = portMUX_INITIALIZER_UNLOCKED;
 // We reuse this buffer when building the JSON response.
 float s_copy[kCapacity];
 
-bool g_connected_prev = false;
-bool g_capturing = false;
-bool g_truncated = false;
-uint32_t g_session_start_ms = 0;
+bool g_connected_prev              = false;
+bool g_capturing                   = false;
+bool g_truncated                   = false;
+uint32_t g_session_start_ms        = 0;
 uint32_t g_last_session_uptime_sec = 0;
 
 uint32_t g_last_push_ms = 0;
 
 void clearSessionUnlocked(uint32_t nowMs) {
-  g_count = 0;
-  g_truncated = false;
-  g_capturing = true;
-  g_session_start_ms = nowMs;
+  g_count                   = 0;
+  g_truncated               = false;
+  g_capturing               = true;
+  g_session_start_ms        = nowMs;
   g_last_session_uptime_sec = 0;
-  g_last_push_ms = 0; // allow immediate first push
+  g_last_push_ms            = 0; // allow immediate first push
 }
 
 size_t sanitizeMaxPoints(size_t max_points) {
@@ -120,8 +120,8 @@ void appendSeriesJson(String& out, const float* series, size_t count, size_t poi
       avgRangeEnd = (avgRangeStart + 1u <= count) ? (avgRangeStart + 1u) : count;
     }
 
-    double avgX = 0.0;
-    double avgY = 0.0;
+    double avgX        = 0.0;
+    double avgY        = 0.0;
     size_t avgRangeLen = 0u;
     for (size_t j = avgRangeStart; j < avgRangeEnd; j++) {
       avgX += static_cast<double>(j);
@@ -137,7 +137,7 @@ void appendSeriesJson(String& out, const float* series, size_t count, size_t poi
     }
 
     size_t rangeOffs = static_cast<size_t>(floor(static_cast<double>(i) * every)) + 1u;
-    size_t rangeTo = static_cast<size_t>(floor((static_cast<double>(i) + 1.0) * every)) + 1u;
+    size_t rangeTo   = static_cast<size_t>(floor((static_cast<double>(i) + 1.0) * every)) + 1u;
 
     const size_t lastIndex = count - 1u;
     if (rangeOffs >= lastIndex) {
@@ -178,13 +178,13 @@ void appendSeriesJson(String& out, const float* series, size_t count, size_t poi
 
 void telemetryLogInit() {
   portENTER_CRITICAL(&g_mux);
-  g_count = 0;
-  g_connected_prev = false;
-  g_capturing = false;
-  g_truncated = false;
-  g_session_start_ms = 0;
-  g_last_session_uptime_sec = 0;
-  g_last_push_ms = 0;
+  g_count                       = 0;
+  g_connected_prev              = false;
+  g_capturing                   = false;
+  g_truncated                   = false;
+  g_session_start_ms            = 0;
+  g_last_session_uptime_sec     = 0;
+  g_last_push_ms                = 0;
   portEXIT_CRITICAL(&g_mux);
 }
 
@@ -233,12 +233,12 @@ void telemetryLogMaybePush(float voltage_v, bool pack_connected) {
 }
 
 String telemetryLogGetJson(bool full, size_t max_points) {
-  size_t count = 0;
-  uint32_t device_ms = 0;
-  uint32_t uptime_sec = 0;
+  size_t   count            = 0;
+  uint32_t device_ms        = 0;
+  uint32_t uptime_sec       = 0;
   uint32_t session_start_ms = 0;
-  bool truncated = false;
-  bool connected_now = false;
+  bool     truncated        = false;
+  bool     connected_now    = false;
 
   portENTER_CRITICAL(&g_mux);
   count = g_count;
@@ -265,7 +265,7 @@ String telemetryLogGetJson(bool full, size_t max_points) {
   portEXIT_CRITICAL(&g_mux);
 
   const size_t points = decimatedPointCount(count, full, max_points);
-  const bool downsampled = (points < count);
+  const bool   downsampled = (points < count);
   const size_t maxPointsUsed = sanitizeMaxPoints(max_points);
 
   // Reserve a practical lower bound to reduce heap churn on frequent HTTP polls.

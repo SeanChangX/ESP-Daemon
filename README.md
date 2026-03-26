@@ -291,7 +291,7 @@ On press/release edges, firmware calls `POST {baseUrl}/json/state` with `{"on": 
 
 ## HTTP API
 
-JSON request bodies use `Content-Type: application/json` unless noted. Routes depend on firmware image: **Daemon** and **E-STOP** expose different paths (see `esp_firmware/lib/web_server/web_server.cpp`).
+JSON request bodies use `Content-Type: application/json` unless noted. Routes depend on firmware image: **Daemon** and **E-STOP** expose different paths (see `esp_firmware/lib/web_server/web_server.cpp` and `esp_firmware/lib/web_server/web_server_routes.cpp`).
 
 ### Route map
 

@@ -19,10 +19,10 @@ namespace {
 
 AsyncWebServer netWizardServer(80);
 NetWizard netWizard(&netWizardServer);
-bool netWizardConfigured = false;
-bool mdnsStarted = false;
-bool netWizardHttpReleased = false;
-bool restartAfterProvisioningPending = false;
+bool netWizardConfigured              = false;
+bool mdnsStarted                      = false;
+bool netWizardHttpReleased            = false;
+bool restartAfterProvisioningPending  = false;
 unsigned long restartAfterProvisioningAtMs = 0;
 String mdnsName;
 
@@ -41,7 +41,8 @@ String getProvisioningSsid() {
 String getDeviceNameLower() {
   // device_name comes from Settings and is sanitized in app_settings.cpp.
   // Re-apply lowercase here to ensure WiFi/MDNS match exactly.
-  String host = getAppSettings().device_name;
+  AppSettingsReadGuard settingsGuard;
+  String host = settingsGuard.settings().device_name;
   host.trim();
   host.toLowerCase();
   if (host.length() == 0) {
@@ -77,11 +78,11 @@ void applyMdnsName() {
 }
 
 void ensurePortalIfDisconnected() {
-  static unsigned long lastPortalStartMs = 0;
-  static unsigned long disconnectedSinceMs = 0;
-  static unsigned long lastReconnectOnlyLogMs = 0;
-  constexpr unsigned long kPortalRestartCooldownMs = 30000;
-  constexpr unsigned long kPortalStartGraceMs = 45000;
+  static    unsigned long lastPortalStartMs         = 0;
+  static    unsigned long disconnectedSinceMs       = 0;
+  static    unsigned long lastReconnectOnlyLogMs    = 0;
+  constexpr unsigned long kPortalRestartCooldownMs  = 30000;
+  constexpr unsigned long kPortalStartGraceMs       = 45000;
 
   if (WiFi.status() == WL_CONNECTED) {
     disconnectedSinceMs = 0;
@@ -129,7 +130,7 @@ void ensurePortalIfDisconnected() {
 }
 
 void reconnectSavedWifiIfDisconnected() {
-  static unsigned long lastReconnectAttemptMs = 0;
+  static    unsigned long lastReconnectAttemptMs      = 0;
   constexpr unsigned long kReconnectAttemptIntervalMs = 10000;
 
   if (WiFi.status() == WL_CONNECTED) {
@@ -170,9 +171,9 @@ void reconnectSavedWifiIfDisconnected() {
 }
 
 void applyWifiStaLinkProfile(bool force = false) {
-  static unsigned long lastAttemptMs = 0;
-  static bool lastAppliedOk = false;
-  constexpr unsigned long kRetryMs = 5000;
+  static    unsigned long lastAttemptMs = 0;
+  static    bool          lastAppliedOk = false;
+  constexpr unsigned long kRetryMs      = 5000;
 
   const unsigned long now = millis();
   if (!force && (now - lastAttemptMs) < kRetryMs) {
@@ -291,7 +292,12 @@ void releaseNetWizardHttpIfConnected() {
 }
 
 void updateWifiChannelCache() {
-  wifi_channel = (WiFi.status() == WL_CONNECTED) ? WiFi.channel() : getAppSettings().espnow_channel;
+  if (WiFi.status() == WL_CONNECTED) {
+    wifi_channel = WiFi.channel();
+    return;
+  }
+  AppSettingsReadGuard settingsGuard;
+  wifi_channel = settingsGuard.settings().espnow_channel;
 }
 
 void persistEspNowChannelFromConnectedWifi() {
@@ -307,9 +313,12 @@ void persistEspNowChannelFromConnectedWifi() {
     return;
   }
 
-  if (getAppSettings().espnow_channel == connectedChannel) {
-    lastSavedChannel = connectedChannel;
-    return;
+  {
+    AppSettingsReadGuard settingsGuard;
+    if (settingsGuard.settings().espnow_channel == connectedChannel) {
+      lastSavedChannel = connectedChannel;
+      return;
+    }
   }
 
   if (lastSavedChannel == connectedChannel) {

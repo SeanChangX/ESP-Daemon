@@ -13,7 +13,6 @@ enum led_mode {
 };
 
 extern volatile int mode;
-extern volatile int sensor_mode;
 extern unsigned long last_override_time;
 extern unsigned long override_duration;
 

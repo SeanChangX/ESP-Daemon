@@ -1,43 +1,60 @@
 #include "led_control.h"
 
 #include "app_settings.h"
+#include "voltmeter.h"
 
 #include <Adafruit_NeoPixel.h>
 
 namespace {
 
-Adafruit_NeoPixel* g_strip = nullptr;
+Adafruit_NeoPixel* g_strip          = nullptr;
+uint16_t           g_led_count      = 1;
+uint8_t            g_led_brightness = 200;
 
 Adafruit_NeoPixel* stripOrNull() {
   return g_strip;
 }
 
 uint16_t ledCount() {
-  return static_cast<uint16_t>(getAppSettings().led_count > 0 ? getAppSettings().led_count : 1);
+  return g_led_count;
 }
 
 uint8_t ledBrightness() {
-  return getAppSettings().led_brightness;
+  return g_led_brightness;
 }
 
 } // namespace
 
 // use volatile to ensure the variable is updated correctly in ISR
-volatile int mode = 0;
-volatile int sensor_mode = 0;
-unsigned long last_override_time = 0;
-unsigned long override_duration = 1000;
+volatile int  mode                = 0;
+unsigned long last_override_time  = 0;
+unsigned long override_duration   = 1000;
 int current_mode;
 
+int batteryStatusToLedMode(BatteryPackStatus status) {
+  switch (status) {
+    case BATTERY_STATUS_DISCONNECTED:
+      return BATT_DISCONNECTED;
+    case BATTERY_STATUS_LOW:
+      return BATT_LOW;
+    case BATTERY_STATUS_NORMAL:
+    default:
+      return DEFAULT_MODE;
+  }
+}
+
 void initLED() {
-  const AppSettings& settings = getAppSettings();
+  AppSettingsReadGuard settingsGuard;
+  const AppSettings& settings = settingsGuard.settings();
+  g_led_count = static_cast<uint16_t>(settings.led_count > 0 ? settings.led_count : 1);
+  g_led_brightness = settings.led_brightness;
 
   if (g_strip != nullptr) {
     delete g_strip;
     g_strip = nullptr;
   }
 
-  g_strip = new Adafruit_NeoPixel(ledCount(), settings.led_pin, NEO_GRB + NEO_KHZ800);
+  g_strip = new Adafruit_NeoPixel(g_led_count, settings.led_pin, NEO_GRB + NEO_KHZ800);
   g_strip->begin();
   g_strip->show();
   g_strip->setBrightness(ledBrightness());
@@ -123,7 +140,7 @@ void breathingEffectNonBlocking(uint32_t color, int cycles) {
   if (strip == nullptr) return;
 
   static int brightness = 0;
-  static int direction = 5;
+  static int direction  = 5;
   static int cycleCount = 0;
 
   brightness += direction;
@@ -135,7 +152,7 @@ void breathingEffectNonBlocking(uint32_t color, int cycles) {
       if (cycleCount >= cycles) {
         cycleCount = 0;
         brightness = 0;
-        direction = 5;
+        direction  = 5;
         return;
       }
     }
@@ -171,6 +188,8 @@ void LEDTask(void* pvParameters) {
   (void)pvParameters;
 
   for (;;) {
+    const int sensor_mode = batteryStatusToLedMode(getBatteryPackStatus());
+
     if (mode == SIMA_CMD || mode == EME_ENABLE || mode == EME_DISABLE) {
       if (millis() - last_override_time > override_duration) {
         mode = -1;

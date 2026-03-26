@@ -3,12 +3,17 @@
 
 #include <Arduino.h>
 
-extern float Vbattf;
+enum BatteryPackStatus {
+  BATTERY_STATUS_NORMAL       = 0,
+  BATTERY_STATUS_LOW          = 1,
+  BATTERY_STATUS_DISCONNECTED = 2
+};
 
 void initVoltmeter();
 void voltmeter();
 void onTimer();
 void voltmeterTask(void* pvParameters);
-String getSensorReadings();
+float getBatteryVoltage();
+BatteryPackStatus getBatteryPackStatus();
 
 #endif

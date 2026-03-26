@@ -27,7 +27,8 @@ int resolveEffectiveEspNowChannel() {
   if (wifiConnected) {
     return WiFi.channel();
   }
-  return static_cast<int>(getAppSettings().espnow_channel);
+  AppSettingsReadGuard settingsGuard;
+  return static_cast<int>(settingsGuard.settings().espnow_channel);
 }
 
 void applyEspNowChannel(bool verboseLog) {
@@ -70,7 +71,8 @@ bool resolveEmergencyTargetsForSource(
   target_group2 = false;
   target_group3 = false;
 
-  const auto& sources = getAppSettings().emergency_sources;
+  AppSettingsReadGuard settingsGuard;
+  const auto& sources = settingsGuard.settings().emergency_sources;
   bool found = false;
   for (const auto& src : sources) {
     if (memcmp(src.mac.data(), mac_addr, 6) != 0) {
@@ -109,19 +111,19 @@ void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* incomingData, in
 
 #else
 
-constexpr uint32_t kEStopSendIntervalMs = 80;
-constexpr uint32_t kEStopDebounceMs = 35;
+constexpr uint32_t kEStopSendIntervalMs       = 80;
+constexpr uint32_t kEStopDebounceMs           = 35;
 constexpr uint32_t kEStopPeerEnsureIntervalMs = 1000;
-constexpr uint16_t kWledHttpTimeoutMs = 1500;
-constexpr char kEStopPayload[] = "STOP";
+constexpr uint16_t kWledHttpTimeoutMs         = 1500;
+constexpr char     kEStopPayload[]            = "STOP";
 // Cybertruck-style boot cue + standard factory E-STOP alarm (passive buzzer approximation).
-constexpr uint16_t kBuzzerAlarmOnMs = 300;
-constexpr uint16_t kBuzzerAlarmOffMs = 240;
-constexpr uint16_t kBuzzerAlarmFreqAHz = 1150;
-constexpr uint16_t kBuzzerAlarmFreqBHz = 1150;
-constexpr uint16_t kBuzzerPwmAttachFreqHz = 2000;
-constexpr uint8_t kBuzzerPwmResolutionBits = 8;
-constexpr uint8_t kBuzzerPwmDuty = 127;
+constexpr uint16_t kBuzzerAlarmOnMs           = 300;
+constexpr uint16_t kBuzzerAlarmOffMs          = 240;
+constexpr uint16_t kBuzzerAlarmFreqAHz        = 1150;
+constexpr uint16_t kBuzzerAlarmFreqBHz        = 1150;
+constexpr uint16_t kBuzzerPwmAttachFreqHz     = 2000;
+constexpr uint8_t  kBuzzerPwmResolutionBits   = 8;
+constexpr uint8_t  kBuzzerPwmDuty             = 127;
 
 struct BuzzerToneStep {
   uint16_t holdMs;
@@ -130,39 +132,39 @@ struct BuzzerToneStep {
 
 constexpr BuzzerToneStep kBuzzerStartupPattern[] = {
   // Modern factory-style boot cue: short stepped rise + confirmation tail.
-  {78, 880},
-  {26, 0},
-  {82, 1175},
-  {28, 0},
-  {92, 1568},
-  {34, 0},
-  {148, 1319}
+  {  78,  880 },
+  {  26,    0 },
+  {  82, 1175 },
+  {  28,    0 },
+  {  92, 1568 },
+  {  34,    0 },
+  { 148, 1319 }
 };
 
 struct EStopRouteRuntime {
   std::array<uint8_t, 6> targetMac = {0, 0, 0, 0, 0, 0};
-  String targetMacText;
-  uint8_t switchPin = 0;
-  bool switchActiveHigh = false;
-  bool switchLogicInverted = false;
-  int rawLevel = HIGH;
-  int lastObservedRawLevel = HIGH;
+  String  targetMacText;
+  uint8_t switchPin            = 0;
+  bool    switchActiveHigh     = false;
+  bool    switchLogicInverted  = false;
+  int     rawLevel             = HIGH;
+  int     lastObservedRawLevel = HIGH;
   unsigned long rawChangedAtMs = 0;
-  bool debounceInitialized = false;
-  bool pressed = false;
-  bool peerConfigured = false;
+  bool    debounceInitialized  = false;
+  bool    pressed              = false;
+  bool    peerConfigured       = false;
 };
 
 std::vector<EStopRouteRuntime> g_estopRoutes;
-String g_estopRouteSignature;
-bool g_estopSwitchPressed = false;
-size_t g_estopPressedRouteCount = 0;
-int g_estopSwitchRawLevel = HIGH;
-uint32_t g_estopPacketCount = 0;
-unsigned long g_lastEStopSendMs = 0;
-unsigned long g_lastPeerEnsureMs = 0;
-bool g_wledSnapshotValid = false;
-String g_wledStatus = "disabled";
+String        g_estopRouteSignature;
+bool          g_estopSwitchPressed      = false;
+size_t        g_estopPressedRouteCount  = 0;
+int           g_estopSwitchRawLevel     = HIGH;
+uint32_t      g_estopPacketCount        = 0;
+unsigned long g_lastEStopSendMs         = 0;
+unsigned long g_lastPeerEnsureMs        = 0;
+bool          g_wledSnapshotValid       = false;
+String        g_wledStatus              = "disabled";
 
 enum class BuzzerMode : uint8_t {
   Off = 0,
@@ -170,19 +172,20 @@ enum class BuzzerMode : uint8_t {
   Alarm
 };
 
-uint8_t g_buzzerPinConfigured = 255;
-bool g_buzzerEnabledConfigured = false;
-bool g_buzzerPwmAttached = false;
-bool g_buzzerOutputOn = false;
-BuzzerMode g_buzzerMode = BuzzerMode::Off;
-bool g_buzzerAlarmUseAltTone = false;
-unsigned long g_buzzerPhaseStartedAtMs = 0;
-size_t g_buzzerStartupStep = 0;
-bool g_startupTonePlayed = false;
-bool g_wifiConnectedPrev = false;
+uint8_t       g_buzzerPinConfigured     = 255;
+bool          g_buzzerEnabledConfigured = false;
+bool          g_buzzerPwmAttached       = false;
+bool          g_buzzerOutputOn          = false;
+BuzzerMode    g_buzzerMode              = BuzzerMode::Off;
+bool          g_buzzerAlarmUseAltTone   = false;
+unsigned long g_buzzerPhaseStartedAtMs  = 0;
+size_t        g_buzzerStartupStep       = 0;
+bool          g_startupTonePlayed       = false;
+bool          g_wifiConnectedPrev       = false;
 
 String normalizeWledBaseUrl() {
-  String url = getAppSettings().estop_wled_base_url;
+  AppSettingsReadGuard settingsGuard;
+  String url = settingsGuard.settings().estop_wled_base_url;
   url.trim();
   if (url.endsWith("/")) {
     url.remove(url.length() - 1);
@@ -209,7 +212,8 @@ bool wledHttpPostJson(const String& url, const String& payload) {
 }
 
 bool wledControlEnabled() {
-  const AppSettings& settings = getAppSettings();
+  AppSettingsReadGuard settingsGuard;
+  const AppSettings& settings = settingsGuard.settings();
   return settings.estop_wled_enabled && settings.estop_wled_base_url.length() > 0;
 }
 
@@ -249,15 +253,13 @@ bool applyWledPreset(uint16_t preset, const char* okStatus, const char* failStat
 }
 
 void handleWledPressedEdge() {
-  applyWledPreset(getAppSettings().estop_wled_pressed_preset,
-                  "estop_preset_applied",
-                  "preset_apply_failed");
+  AppSettingsReadGuard settingsGuard;
+  applyWledPreset(settingsGuard.settings().estop_wled_pressed_preset, "estop_preset_applied", "preset_apply_failed");
 }
 
 void handleWledReleasedEdge() {
-  applyWledPreset(getAppSettings().estop_wled_released_preset,
-                  "release_preset_applied",
-                  "release_preset_apply_failed");
+  AppSettingsReadGuard settingsGuard;
+  applyWledPreset(settingsGuard.settings().estop_wled_released_preset, "release_preset_applied", "release_preset_apply_failed");
 }
 
 void stopBuzzerOutput() {
@@ -294,28 +296,29 @@ void playBuzzerTone(uint16_t freqHz) {
 void updateWledForAggregateSwitchState(bool pressed) {
   if (pressed) {
     if (g_buzzerEnabledConfigured) {
-      g_buzzerMode = BuzzerMode::Alarm;
-      g_buzzerPhaseStartedAtMs = millis();
-      g_buzzerAlarmUseAltTone = false;
-      g_buzzerOutputOn = true;
+      g_buzzerMode              = BuzzerMode::Alarm;
+      g_buzzerPhaseStartedAtMs  = millis();
+      g_buzzerAlarmUseAltTone   = false;
+      g_buzzerOutputOn          = true;
       playBuzzerTone(kBuzzerAlarmFreqAHz);
-      g_buzzerAlarmUseAltTone = true;
+      g_buzzerAlarmUseAltTone   = true;
     }
     handleWledPressedEdge();
     return;
   }
   if (g_buzzerMode == BuzzerMode::Alarm) {
-    g_buzzerMode = BuzzerMode::Off;
+    g_buzzerMode                = BuzzerMode::Off;
     stopBuzzerOutput();
-    g_buzzerOutputOn = false;
-    g_buzzerStartupStep = 0;
-    g_buzzerAlarmUseAltTone = false;
+    g_buzzerOutputOn            = false;
+    g_buzzerStartupStep         = 0;
+    g_buzzerAlarmUseAltTone     = false;
   }
   handleWledReleasedEdge();
 }
 
 void applyBuzzerConfig(bool forceReconfigure) {
-  const AppSettings& settings = getAppSettings();
+  AppSettingsReadGuard settingsGuard;
+  const AppSettings& settings = settingsGuard.settings();
   if (!forceReconfigure &&
       settings.estop_buzzer_enabled == g_buzzerEnabledConfigured &&
       settings.estop_buzzer_pin == g_buzzerPinConfigured) {
@@ -334,12 +337,12 @@ void applyBuzzerConfig(bool forceReconfigure) {
   }
 
   g_buzzerEnabledConfigured = settings.estop_buzzer_enabled;
-  g_buzzerPinConfigured = settings.estop_buzzer_pin;
-  g_buzzerPwmAttached = false;
-  g_buzzerOutputOn = false;
-  g_buzzerMode = BuzzerMode::Off;
-  g_buzzerAlarmUseAltTone = false;
-  g_buzzerStartupStep = 0;
+  g_buzzerPinConfigured     = settings.estop_buzzer_pin;
+  g_buzzerPwmAttached       = false;
+  g_buzzerOutputOn          = false;
+  g_buzzerMode              = BuzzerMode::Off;
+  g_buzzerAlarmUseAltTone   = false;
+  g_buzzerStartupStep       = 0;
 
   if (!g_buzzerEnabledConfigured || g_buzzerPinConfigured > 48) {
     g_buzzerEnabledConfigured = false;
@@ -365,10 +368,10 @@ void startStartupTone() {
     return;
   }
 
-  g_buzzerMode = BuzzerMode::StartupTone;
-  g_buzzerStartupStep = 0;
-  g_buzzerPhaseStartedAtMs = millis();
-  g_buzzerOutputOn = (kBuzzerStartupPattern[0].freqHz > 0);
+  g_buzzerMode              = BuzzerMode::StartupTone;
+  g_buzzerStartupStep       = 0;
+  g_buzzerPhaseStartedAtMs  = millis();
+  g_buzzerOutputOn          = (kBuzzerStartupPattern[0].freqHz > 0);
   playBuzzerTone(kBuzzerStartupPattern[0].freqHz);
 }
 
@@ -437,9 +440,11 @@ void updateBuzzer() {
 }
 
 String buildRouteSignature() {
+  AppSettingsReadGuard settingsGuard;
+  const AppSettings& settings = settingsGuard.settings();
   String signature;
   signature.reserve(64);
-  const auto& routes = getAppSettings().estop_routes;
+  const auto& routes = settings.estop_routes;
   for (const auto& route : routes) {
     signature += route.target_mac;
     signature += "|";
@@ -496,7 +501,7 @@ bool ensureRoutePeerConfigured(EStopRouteRuntime& route, bool verboseLog) {
   esp_now_peer_info_t peerInfo = {};
   memcpy(peerInfo.peer_addr, route.targetMac.data(), 6);
   peerInfo.channel = 0;
-  peerInfo.ifidx = WIFI_IF_STA;
+  peerInfo.ifidx   = WIFI_IF_STA;
   peerInfo.encrypt = false;
 
   const esp_err_t addErr = esp_now_add_peer(&peerInfo);
@@ -523,6 +528,8 @@ void ensureAllRoutePeersConfigured(bool verboseLog) {
 }
 
 void rebuildEStopRoutesFromSettings(bool verboseLog) {
+  AppSettingsReadGuard settingsGuard;
+  const AppSettings& settings = settingsGuard.settings();
   const String signature = buildRouteSignature();
   if (signature == g_estopRouteSignature) {
     return;
@@ -531,17 +538,17 @@ void rebuildEStopRoutesFromSettings(bool verboseLog) {
   clearRoutePeers();
   g_estopRoutes.clear();
 
-  for (const auto& routeCfg : getAppSettings().estop_routes) {
-    EStopRouteRuntime route = {};
-    route.switchPin = routeCfg.switch_pin;
-    route.switchActiveHigh = routeCfg.switch_active_high;
-    route.switchLogicInverted = routeCfg.switch_logic_inverted;
-    route.rawLevel = route.switchActiveHigh ? LOW : HIGH;
-    route.lastObservedRawLevel = route.rawLevel;
+  for (const auto& routeCfg : settings.estop_routes) {
+    EStopRouteRuntime route     = {};
+    route.switchPin             = routeCfg.switch_pin;
+    route.switchActiveHigh      = routeCfg.switch_active_high;
+    route.switchLogicInverted   = routeCfg.switch_logic_inverted;
+    route.rawLevel              = route.switchActiveHigh ? LOW : HIGH;
+    route.lastObservedRawLevel  = route.rawLevel;
 
     std::array<uint8_t, 6> parsedMac = {};
     if (parseMacString(routeCfg.target_mac, parsedMac)) {
-      route.targetMac = parsedMac;
+      route.targetMac     =             parsedMac;
       route.targetMacText = toMacString(parsedMac);
     }
 
@@ -549,11 +556,11 @@ void rebuildEStopRoutesFromSettings(bool verboseLog) {
     g_estopRoutes.push_back(route);
   }
 
-  g_estopSwitchPressed = false;
-  g_estopPressedRouteCount = 0;
-  g_estopSwitchRawLevel = HIGH;
-  g_estopRouteSignature = signature;
-  g_lastPeerEnsureMs = 0;
+  g_estopSwitchPressed      = false;
+  g_estopPressedRouteCount  = 0;
+  g_estopSwitchRawLevel     = HIGH;
+  g_estopRouteSignature     = signature;
+  g_lastPeerEnsureMs        = 0;
 
   if (g_espnowReady) {
     ensureAllRoutePeersConfigured(verboseLog);
@@ -567,9 +574,9 @@ void rebuildEStopRoutesFromSettings(bool verboseLog) {
 void sampleEStopSwitches() {
   rebuildEStopRoutesFromSettings(false);
   if (g_estopRoutes.empty()) {
-    g_estopSwitchPressed = false;
-    g_estopPressedRouteCount = 0;
-    g_estopSwitchRawLevel = HIGH;
+    g_estopSwitchPressed      = false;
+    g_estopPressedRouteCount  = 0;
+    g_estopSwitchRawLevel     = HIGH;
     return;
   }
 
@@ -580,15 +587,15 @@ void sampleEStopSwitches() {
     const int raw = digitalRead(route.switchPin);
 
     if (!route.debounceInitialized) {
-      route.debounceInitialized = true;
-      route.rawLevel = raw;
-      route.lastObservedRawLevel = raw;
-      route.rawChangedAtMs = now;
+      route.debounceInitialized   = true;
+      route.rawLevel              = raw;
+      route.lastObservedRawLevel  = raw;
+      route.rawChangedAtMs        = now;
     }
 
     if (raw != route.lastObservedRawLevel) {
-      route.lastObservedRawLevel = raw;
-      route.rawChangedAtMs = now;
+      route.lastObservedRawLevel  = raw;
+      route.rawChangedAtMs        = now;
     }
 
     if ((now - route.rawChangedAtMs) >= kEStopDebounceMs) {
@@ -603,9 +610,9 @@ void sampleEStopSwitches() {
   }
 
   const bool previousPressed = g_estopSwitchPressed;
-  g_estopPressedRouteCount = pressedCount;
-  g_estopSwitchPressed = (pressedCount > 0);
-  g_estopSwitchRawLevel = g_estopRoutes.front().rawLevel;
+  g_estopPressedRouteCount =  pressedCount;
+  g_estopSwitchPressed     = (pressedCount > 0);
+  g_estopSwitchRawLevel    = g_estopRoutes.front().rawLevel;
 
   if (previousPressed != g_estopSwitchPressed) {
     updateWledForAggregateSwitchState(g_estopSwitchPressed);
@@ -627,7 +634,12 @@ bool hasMacInList(const std::vector<std::array<uint8_t, 6>>& macs, const std::ar
 }
 
 void sendEStopIfPressed() {
-  if (!g_espnowReady || !getAppSettings().runtime_espnow_enabled) {
+  bool espnowEnabled = false;
+  {
+    AppSettingsReadGuard settingsGuard;
+    espnowEnabled = settingsGuard.settings().runtime_espnow_enabled;
+  }
+  if (!g_espnowReady || !espnowEnabled) {
     return;
   }
 
@@ -715,7 +727,12 @@ String configuredPeerMac(size_t index) {
 } // namespace
 
 void initESPNow() {
-  if (!getAppSettings().runtime_espnow_enabled) {
+  bool espnowEnabled = false;
+  {
+    AppSettingsReadGuard settingsGuard;
+    espnowEnabled = settingsGuard.settings().runtime_espnow_enabled;
+  }
+  if (!espnowEnabled) {
     DAEMON_LOGLN("ESP-NOW disabled by runtime settings");
 #if APP_MODE == APP_MODE_ESTOP
     applyBuzzerConfig(true);
@@ -747,9 +764,14 @@ void initESPNow() {
   g_espnowReady = true;
 
 #if APP_MODE == APP_MODE_DAEMON
+  size_t emergencySourceCount = 0;
+  {
+    AppSettingsReadGuard settingsGuard;
+    emergencySourceCount = settingsGuard.settings().emergency_sources.size();
+  }
   esp_now_register_recv_cb(onDataRecv);
   DAEMON_LOGF("ESP-NOW receiver initialized (configured emergency sources: %d)\n",
-              static_cast<int>(getAppSettings().emergency_sources.size()));
+              static_cast<int>(emergencySourceCount));
 #else
   ensureAllRoutePeersConfigured(true);
   DAEMON_LOGF("ESP-NOW E-stop sender initialized (routes=%d)\n", static_cast<int>(g_estopRoutes.size()));
@@ -757,7 +779,12 @@ void initESPNow() {
 }
 
 void refreshESPNowChannel() {
-  if (!getAppSettings().runtime_espnow_enabled) {
+  bool espnowEnabled = false;
+  {
+    AppSettingsReadGuard settingsGuard;
+    espnowEnabled = settingsGuard.settings().runtime_espnow_enabled;
+  }
+  if (!espnowEnabled) {
     return;
   }
 

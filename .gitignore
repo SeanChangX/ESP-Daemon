@@ -10,9 +10,11 @@
 **/__pycache__/
 
 # Ignore mirco-ROS files
-**/src/micro_ros/
+**/src/micro_ros_setup/
 **/src/uros/
 **/ros2.repos
+**/.micro_ros_bootstrapped_*
+**/.micro_ros_bootstrap.lock
 
 # Ignore the PlatformIO directory
 **/.pio/
@@ -20,3 +22,7 @@
 # Ignore tmp files
 **/tmp/*
 !**/tmp/.gitkeep
+
+# Environment files
+.env
+!.env.example

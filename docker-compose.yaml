@@ -1,43 +1,50 @@
 services:
   esp-daemon:
-    build: 
+    build:
       context: .
       dockerfile: Dockerfile
-      target: final
       args:
-        ROS_DISTRO: ${ROS_DISTRO}
-        USERNAME: ros
-    image: scx/esp-daemon:${ROS_DISTRO}
+        ROS_DISTRO: ${ROS_DISTRO:-humble}
+        USERNAME: ${DOCKER_USER:-ros}
+        USER_UID: ${UID:-1000}
+        USER_GID: ${GID:-1000}
+        CONTAINER_TZ: ${CONTAINER_TZ:-Etc/UTC}
+        DEFAULT_RMW_IMPLEMENTATION: ${DEFAULT_RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
+    image: seanchangx/esp-daemon:${ROS_DISTRO:-humble}
     container_name: esp-daemon
+    init: true
     stdin_open: true
     tty: true
-    privileged: true
-    network_mode: "host"
+    privileged: ${ESP_DAEMON_PRIVILEGED:-false}
+    network_mode: host
     restart: unless-stopped
-
-    working_dir: /home/ros
-
+    working_dir: /home/${DOCKER_USER:-ros}/esp_daemon
     environment:
-      - TERM=xterm-256color
-      - DISPLAY=${DISPLAY}
-      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID}
-      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-
+      TERM: xterm-256color
+      TZ: ${TZ:-Etc/UTC}
+      DISPLAY: ${DISPLAY:-}
+      ROS_DISTRO: ${ROS_DISTRO:-humble}
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
+      RMW_IMPLEMENTATION: ${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
+      WS_DIR: /home/${DOCKER_USER:-ros}/esp_daemon
+      MICRO_ROS_SERIAL_DEV: ${MICRO_ROS_SERIAL_DEV:-/dev/ttyACM0}
+      AUTO_BOOTSTRAP_MICRO_ROS: ${AUTO_BOOTSTRAP_MICRO_ROS:-true}
+      MICRO_ROS_INSTALL_ARGS: ${MICRO_ROS_INSTALL_ARGS:-}
+    group_add:
+      - dialout
+    devices:
+      - ${MICRO_ROS_SERIAL_DEV:-/dev/ttyACM0}:${MICRO_ROS_SERIAL_DEV:-/dev/ttyACM0}
     volumes:
-      - ./entrypoint.sh:/entrypoint.sh
+      - ./entrypoint.sh:/entrypoint.sh:ro
       # Mount app resources into container.
-      - ./esp_daemon_ws/:/home/ros/esp_daemon/   # ros2 workspace
+      - ./esp_daemon_ws:/home/${DOCKER_USER:-ros}/esp_daemon # ros2 workspace
 
       # Mount local timezone into container.
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
       # Mount X11 server
-      - /tmp/.X11-unix:/tmp/.X11-unix
-      
-      # Direct Rendering Infrastructure
-      - /dev:/dev
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
 
-    stop_grace_period: 1s
+    stop_grace_period: 10s
 
-    entrypoint: ["/bin/bash", "-c", "/entrypoint.sh"]
-    command: ["/bin/bash"]
+    entrypoint: ["/entrypoint.sh"]

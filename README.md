@@ -207,29 +207,65 @@ The device exposes low-battery data via HTTP and ROS 2; desktop or fleet alertin
 
 Transport: UART to `micro_ros_agent` (see firmware `Serial`).
 
-### Agent workspace (one-time bootstrap)
+### Recommended startup (auto bootstrap)
 
-Builds `micro_ros_setup` and agent workspace inside the mounted tree (`esp_daemon_ws/micro-ROS_install.sh`):
-
-```bash
-docker compose run --rm esp-daemon bash -lc 'cd /home/ros/esp_daemon && chmod +x micro-ROS_install.sh && ./micro-ROS_install.sh'
-```
-
-### Routine operation
+From a fresh clone:
 
 ```bash
+cd /path/to/ESP-Daemon
+cp .env.example .env
 docker compose up -d --build
+docker compose logs -f esp-daemon
 ```
 
-`docker-compose.yaml` runs `entrypoint.sh`, which sources `~/esp_daemon/install/setup.bash` and then:
+On first startup, `entrypoint.sh` automatically checks whether `micro_ros_agent` exists.  
+If missing, it runs `micro-ROS_install.sh` once to bootstrap the workspace.
+This first run can take several minutes (dependency install + build).
+
+### Manual bootstrap (optional)
+
+Use this when you want to prebuild explicitly or force rebuild:
 
 ```bash
-ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0
+docker compose run --rm esp-daemon bash -lc 'cd "${WS_DIR:-$HOME/esp_daemon}" && ./micro-ROS_install.sh'
 ```
 
-Requires `/dev/ttyACM0` present (device USB, `privileged: true`, `/dev` bind mount).
+Common options:
 
-**Host environment:** `docker-compose.yaml` passes `ROS_DOMAIN_ID` from the host into the container. Set it to the **same value** as **ROS Domain ID** on the device (Settings → ROS); default is `0` on both sides if unset. Build args use `ROS_DISTRO` from `.env` (e.g. `humble`).
+```bash
+./micro-ROS_install.sh --force
+./micro-ROS_install.sh --skip-rosdep --skip-agent-ws --skip-agent-build
+```
+
+### Runtime operation
+
+```bash
+docker compose up -d
+docker compose logs -f esp-daemon
+```
+
+`docker-compose.yaml` uses `entrypoint.sh` to source ROS/workspace setup and start:
+
+```bash
+ros2 run micro_ros_agent micro_ros_agent serial --dev ${MICRO_ROS_SERIAL_DEV}
+```
+
+By default the container maps one serial device via Docker `devices` and uses `MICRO_ROS_SERIAL_DEV=/dev/ttyACM0`. Set this variable if your device path is different:
+
+```bash
+MICRO_ROS_SERIAL_DEV=/dev/ttyUSB0 docker compose up -d --build
+```
+
+### Environment mapping
+
+Key runtime variables come from `.env`:
+
+- `ROS_DOMAIN_ID` must match ESP device ROS settings.
+- `MICRO_ROS_SERIAL_DEV` must match host USB serial path.
+- `RMW_IMPLEMENTATION` can be `rmw_cyclonedds_cpp` or `rmw_fastrtps_cpp`.
+- `TZ` is optional and defaults to `Etc/UTC`.
+- `AUTO_BOOTSTRAP_MICRO_ROS=true` enables first-run auto bootstrap.
+- `MICRO_ROS_INSTALL_ARGS` passes extra args to bootstrap script (for example `--skip-rosdep`).
 
 ### Typical topics
 

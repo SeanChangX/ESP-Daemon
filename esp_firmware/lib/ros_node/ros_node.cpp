@@ -6,8 +6,20 @@
 
 #include <Arduino.h>
 #include <freertos/semphr.h>
+#ifndef __has_include
+#define __has_include(x) 0
+#endif
 #if ENABLE_MICROROS
 #include <micro_ros_platformio.h>
+#if __has_include(<rmw/validate_node_name.h>)
+#include <rmw/validate_node_name.h>
+#define ESP_DAEMON_HAS_RMW_NODE_NAME_VALIDATOR 1
+#else
+#define ESP_DAEMON_HAS_RMW_NODE_NAME_VALIDATOR 0
+#endif
+#endif
+#ifndef ESP_DAEMON_HAS_RMW_NODE_NAME_VALIDATOR
+#define ESP_DAEMON_HAS_RMW_NODE_NAME_VALIDATOR 0
 #endif
 
 #if ENABLE_MICROROS
@@ -87,6 +99,44 @@ public:
   PowerControlGuard(const PowerControlGuard&) = delete;
   PowerControlGuard& operator=(const PowerControlGuard&) = delete;
 };
+
+#if !ESP_DAEMON_HAS_RMW_NODE_NAME_VALIDATOR
+bool isAsciiAlphaLocal(char ch) {
+  return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z');
+}
+
+bool isAsciiDigitLocal(char ch) {
+  return ch >= '0' && ch <= '9';
+}
+#endif
+
+bool isValidRosNodeNameLocal(const String& value) {
+  if (value.length() == 0) {
+    return false;
+  }
+
+#if ESP_DAEMON_HAS_RMW_NODE_NAME_VALIDATOR
+  int validation_result = RMW_NODE_NAME_VALID;
+  size_t invalid_index = 0;
+  const rmw_ret_t rc = rmw_validate_node_name(value.c_str(), &validation_result, &invalid_index);
+  (void)invalid_index;
+  return (rc == RMW_RET_OK) && (validation_result == RMW_NODE_NAME_VALID);
+#else
+  const char first = value[0];
+  if (!(isAsciiAlphaLocal(first) || first == '_')) {
+    return false;
+  }
+
+  for (size_t i = 1; i < value.length(); ++i) {
+    const char ch = value[i];
+    if (!(isAsciiAlphaLocal(ch) || isAsciiDigitLocal(ch) || ch == '_')) {
+      return false;
+    }
+  }
+
+  return true;
+#endif
+}
 
 } // namespace
 
@@ -374,6 +424,12 @@ void destroy_entities() {
 bool create_entities() {
   AppSettingsReadGuard settingsGuard;
   const AppSettings& settings = settingsGuard.settings();
+  String rosNodeName = settings.ros_node_name;
+  rosNodeName.trim();
+  if (!isValidRosNodeNameLocal(rosNodeName)) {
+    DAEMON_LOGF("Invalid ROS node name '%s', fallback to 'esp_daemon'\n", settings.ros_node_name.c_str());
+    rosNodeName = "esp_daemon";
+  }
 
   init_options                     = rcl_get_zero_initialized_init_options();
   support                          = rclc_support_t();
@@ -399,7 +455,7 @@ bool create_entities() {
     destroy_entities();
     return false;
   }
-  if (!ensureRclOk("rclc_node_init_default", rclc_node_init_default(&node, settings.ros_node_name.c_str(), "", &support))) {
+  if (!ensureRclOk("rclc_node_init_default", rclc_node_init_default(&node, rosNodeName.c_str(), "", &support))) {
     destroy_entities();
     return false;
   }

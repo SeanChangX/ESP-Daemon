@@ -4,6 +4,16 @@
 #include <array>
 #include <cstring>
 
+#ifndef __has_include
+#define __has_include(x) 0
+#endif
+#if __has_include(<rmw/validate_node_name.h>)
+#include <rmw/validate_node_name.h>
+#define ESP_DAEMON_HAS_RMW_NODE_NAME_VALIDATOR 1
+#else
+#define ESP_DAEMON_HAS_RMW_NODE_NAME_VALIDATOR 0
+#endif
+
 namespace {
 
 class ScopedSettingsWriteLock {
@@ -44,6 +54,7 @@ constexpr uint16_t kWledPresetMin           = 1;
 constexpr uint16_t kWledPresetMax           = 250;
 constexpr size_t   kWledUrlMaxLen           = 192;
 constexpr size_t   kControlGroupNameMaxLen  = 32;
+constexpr size_t   kRosNodeNameMaxLen       = 255;
 
 bool isDigitsOnlyLocal(const String& value) {
   if (value.length() == 0) {
@@ -56,6 +67,44 @@ bool isDigitsOnlyLocal(const String& value) {
     }
   }
   return true;
+}
+
+#if !ESP_DAEMON_HAS_RMW_NODE_NAME_VALIDATOR
+bool isAsciiAlphaLocal(char ch) {
+  return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z');
+}
+
+bool isAsciiDigitLocal(char ch) {
+  return ch >= '0' && ch <= '9';
+}
+#endif
+
+bool isValidRosNodeNameLocal(const String& value) {
+  if (value.length() == 0) {
+    return false;
+  }
+
+#if ESP_DAEMON_HAS_RMW_NODE_NAME_VALIDATOR
+  int validation_result = RMW_NODE_NAME_VALID;
+  size_t invalid_index = 0;
+  const rmw_ret_t rc = rmw_validate_node_name(value.c_str(), &validation_result, &invalid_index);
+  (void)invalid_index;
+  return (rc == RMW_RET_OK) && (validation_result == RMW_NODE_NAME_VALID);
+#else
+  const char first = value[0];
+  if (!(isAsciiAlphaLocal(first) || first == '_')) {
+    return false;
+  }
+
+  for (size_t i = 1; i < value.length(); ++i) {
+    const char ch = value[i];
+    if (!(isAsciiAlphaLocal(ch) || isAsciiDigitLocal(ch) || ch == '_')) {
+      return false;
+    }
+  }
+
+  return true;
+#endif
 }
 
 void syncLegacyEStopFieldsFromRoutesLocal(AppSettings& settings) {
@@ -157,6 +206,18 @@ bool updateAppSettingsFromJson(const JsonObjectConst& json, String& error) {
   if (settings.ros_domain_id < 0 || settings.ros_domain_id > 232) {
     settings = backup;
     error = "rosDomainId must be in range 0..232";
+    return false;
+  }
+
+  settings.ros_node_name.trim();
+  if (settings.ros_node_name.length() > kRosNodeNameMaxLen) {
+    settings = backup;
+    error = "rosNodeName must be <= 255 characters";
+    return false;
+  }
+  if (!isValidRosNodeNameLocal(settings.ros_node_name)) {
+    settings = backup;
+    error = "rosNodeName is invalid for ROS 2 (use letters/numbers/_ and do not start with a digit)";
     return false;
   }
 

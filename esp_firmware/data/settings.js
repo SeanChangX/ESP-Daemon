@@ -190,6 +190,20 @@ function setFieldValue(id, value) {
   }
 }
 
+function validateRosNodeName(raw) {
+  const value = String(raw || '').trim();
+  if (!value) {
+    return 'ROS Node Name cannot be empty';
+  }
+  if (value.length > 255) {
+    return 'ROS Node Name must be <= 255 characters';
+  }
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+    return 'Invalid ROS Node Name format';
+  }
+  return '';
+}
+
 function sanitizeFilenamePart(raw, fallback) {
   const s = String(raw == null ? '' : raw).trim();
   const cleaned = s
@@ -729,6 +743,18 @@ function saveSettings() {
       setStatus('PIN code must be 4-32 digits', false);
       return;
     }
+  }
+
+  const rosNodeNameEl = document.getElementById('rosNodeName');
+  if (rosNodeNameEl) {
+    const rosNodeName = String(rosNodeNameEl.value || '').trim();
+    const rosNameError = validateRosNodeName(rosNodeName);
+    if (rosNameError) {
+      setStatus(rosNameError, false);
+      rosNodeNameEl.focus();
+      return;
+    }
+    rosNodeNameEl.value = rosNodeName;
   }
 
   const payload = collectPayload();
